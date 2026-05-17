@@ -1,0 +1,14 @@
+LICENSE: TBD
+
+This is a placeholder. The license for agile_cards has not been chosen
+yet. Candidates under consideration:
+
+- MIT. Short, permissive, low friction. Fine for a portfolio piece.
+- Apache-2.0. Permissive plus an explicit patent grant and a NOTICE
+  mechanism. Better if this evolves into a product with patent surface.
+
+No external contributions should be accepted until this file is replaced
+with the real license text.
+
+Tracked in the repo-migration handoff:
+docs/handoffs/HANDOFF_2026-05-17_repo-migration.md

@@ -1,0 +1,30 @@
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*~
+
+# Sync-tool detritus
+.synctest.*
+*.tmp
+*.bak
+
+# Test outputs
+tests/cards-rename-test/
+*.log
+
+# Python / node detritus if local tooling shows up later
+__pycache__/
+*.pyc
+.venv/
+node_modules/
+
+# Runtime data lives outside this repo by design.
+# If you ever symlink the runtime dir in here for convenience, ignore it.
+todo/
+_batches/
