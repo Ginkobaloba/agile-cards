@@ -1,0 +1,1128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>agile-cards dashboard (v0)</title>
+<style>
+  /* -- palette --------------------------------------------------------- */
+  :root {
+    --bg:        #0e1116;
+    --panel:    #161b22;
+    --panel-2: #1c222b;
+    --border:  #262d39;
+    --text:    #d7dde7;
+    --muted:   #7d8694;
+    --accent:  #7aa2f7;
+    --danger:  #f7768e;
+    --warn:    #e0af68;
+    --ok:      #9ece6a;
+
+    /* tier badges. Light = no extended thinking, dark = extended thinking. */
+    --tier-1:  #5fb87b; /* haiku light  */
+    --tier-2:  #3a8e58; /* haiku dark   */
+    --tier-3:  #5b8bd6; /* sonnet light */
+    --tier-4:  #3a6bb8; /* sonnet dark  */
+    --tier-5:  #a986d6; /* opus light   */
+    --tier-6:  #7e5cb3; /* opus dark    */
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.45;
+    height: 100%;
+  }
+  body { display: flex; flex-direction: column; min-height: 100vh; }
+
+  /* -- header ---------------------------------------------------------- */
+  header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 12px 20px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 {
+    font-size: 15px;
+    font-weight: 600;
+    margin: 0;
+    letter-spacing: 0.2px;
+  }
+  header h1 .logo-dot {
+    display: inline-block;
+    width: 8px; height: 8px; border-radius: 2px;
+    background: var(--accent);
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+  header .tag {
+    font-size: 11px;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    padding: 2px 6px;
+    border-radius: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  header .spacer { flex: 1; }
+  header .folder {
+    font-size: 12px;
+    color: var(--muted);
+    max-width: 360px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  header button, .btn {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  header button:hover, .btn:hover { background: #232a35; }
+  header .link {
+    background: none;
+    border: none;
+    color: var(--accent);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 0;
+    font-family: inherit;
+  }
+  header .link:hover { text-decoration: underline; }
+
+  /* -- board ----------------------------------------------------------- */
+  main { flex: 1; overflow: hidden; display: flex; }
+  .board {
+    flex: 1;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(260px, 1fr));
+    gap: 12px;
+    padding: 16px;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  .column {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .column-head {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .column-head .count {
+    margin-left: auto;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    padding: 1px 7px;
+    border-radius: 10px;
+    color: var(--text);
+    font-weight: 500;
+    font-size: 11px;
+  }
+  .column-body {
+    flex: 1;
+    padding: 8px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .column.drag-over .column-body {
+    background: rgba(122, 162, 247, 0.06);
+    outline: 1px dashed var(--accent);
+    outline-offset: -8px;
+  }
+  .column-empty {
+    color: var(--muted);
+    font-size: 12px;
+    font-style: italic;
+    padding: 16px 8px;
+    text-align: center;
+  }
+
+  /* -- card tile ------------------------------------------------------- */
+  .card {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 10px 11px 11px;
+    cursor: grab;
+    transition: border-color 0.1s;
+  }
+  .card:hover { border-color: #36404f; }
+  .card.dragging { opacity: 0.4; }
+  .card-top {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .card-title {
+    font-size: 13px;
+    font-weight: 600;
+    flex: 1;
+    line-height: 1.35;
+  }
+  .tier {
+    flex-shrink: 0;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 3px;
+    color: #fff;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+  .tier-1 { background: var(--tier-1); }
+  .tier-2 { background: var(--tier-2); }
+  .tier-3 { background: var(--tier-3); }
+  .tier-4 { background: var(--tier-4); }
+  .tier-5 { background: var(--tier-5); }
+  .tier-6 { background: var(--tier-6); }
+  .card-meta {
+    font-size: 11px;
+    color: var(--muted);
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+  }
+  .card-meta .pill {
+    background: rgba(255,255,255,0.04);
+    padding: 1px 6px;
+    border-radius: 3px;
+  }
+  .card-context {
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.4;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+  }
+
+  /* -- detail panel ---------------------------------------------------- */
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    display: none;
+    align-items: stretch;
+    justify-content: flex-end;
+    z-index: 100;
+  }
+  .overlay.show { display: flex; }
+  .panel {
+    width: min(720px, 90vw);
+    background: var(--panel);
+    border-left: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 20px 28px;
+  }
+  .panel-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .panel-head h2 {
+    margin: 0;
+    font-size: 18px;
+    flex: 1;
+    line-height: 1.3;
+  }
+  .panel-head .close {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text);
+    width: 28px; height: 28px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+  }
+  .panel section { margin-bottom: 20px; }
+  .panel h3 {
+    font-size: 11px;
+    text-transform: uppercase;
+    color: var(--muted);
+    letter-spacing: 0.8px;
+    margin: 0 0 8px;
+    font-weight: 600;
+  }
+  .frontmatter {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 10px 12px;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  .frontmatter .row { display: flex; gap: 8px; }
+  .frontmatter .k { color: var(--accent); flex-shrink: 0; min-width: 160px; }
+  .frontmatter .v { color: var(--text); white-space: pre-wrap; word-break: break-word; }
+  .frontmatter .v .null { color: var(--muted); font-style: italic; }
+
+  /* -- markdown body --------------------------------------------------- */
+  .body-md {
+    line-height: 1.6;
+    font-size: 14px;
+  }
+  .body-md h1, .body-md h2, .body-md h3 {
+    margin-top: 18px;
+    margin-bottom: 8px;
+    line-height: 1.3;
+  }
+  .body-md h1 { font-size: 18px; }
+  .body-md h2 { font-size: 16px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+  .body-md h3 { font-size: 14px; color: var(--accent); }
+  .body-md p { margin: 8px 0; }
+  .body-md ul, .body-md ol { margin: 8px 0; padding-left: 22px; }
+  .body-md li { margin: 3px 0; }
+  .body-md code {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12px;
+  }
+  .body-md pre {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    padding: 10px 12px;
+    border-radius: 4px;
+    overflow-x: auto;
+    margin: 10px 0;
+  }
+  .body-md pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .body-md a { color: var(--accent); text-decoration: none; }
+  .body-md a:hover { text-decoration: underline; }
+  .body-md strong { color: #fff; font-weight: 600; }
+  .body-md em { font-style: italic; color: #e3e8f0; }
+  .body-md blockquote {
+    border-left: 3px solid var(--border);
+    padding-left: 10px;
+    margin: 8px 0;
+    color: var(--muted);
+  }
+
+  /* -- toasts ---------------------------------------------------------- */
+  .toasts {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 200;
+  }
+  .toast {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    color: var(--text);
+    padding: 10px 14px;
+    border-radius: 4px;
+    font-size: 13px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    max-width: 340px;
+  }
+  .toast.error { border-left-color: var(--danger); }
+  .toast.ok    { border-left-color: var(--ok); }
+
+  /* -- splash / empty state ------------------------------------------- */
+  .splash {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 14px;
+    padding: 40px 20px;
+    text-align: center;
+  }
+  .splash h2 { margin: 0; font-size: 20px; font-weight: 500; }
+  .splash p { margin: 0; color: var(--muted); max-width: 500px; }
+  .splash button {
+    background: var(--accent);
+    color: #0e1116;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 5px;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 14px;
+    font-family: inherit;
+  }
+  .splash button:hover { background: #8fb1f0; }
+
+  .browser-warn {
+    background: rgba(247, 118, 142, 0.1);
+    border: 1px solid var(--danger);
+    color: var(--danger);
+    padding: 14px 18px;
+    border-radius: 6px;
+    max-width: 540px;
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1><span class="logo-dot"></span>agile-cards dashboard</h1>
+  <span class="tag">v0 read-write demo</span>
+  <span class="spacer"></span>
+  <span id="folderLabel" class="folder"></span>
+  <button id="changeFolderBtn" class="link" style="display:none">Change folder</button>
+  <button id="refreshBtn" style="display:none">Refresh</button>
+</header>
+
+<main id="main">
+  <!-- splash, board, or warning lives here -->
+</main>
+
+<div class="overlay" id="overlay">
+  <div class="panel" id="panel"></div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
+<script>
+"use strict";
+
+/* ===================================================================
+   agile-cards dashboard v0
+   Single-file kanban over the FSA-picked C:\dev\todo\ folder.
+   See HANDOFF_2026-05-17_dashboard-v0.md for known limits and v0+ scope.
+   =================================================================== */
+
+/* ---- constants ---- */
+const COLUMNS = [
+  { id: "backlog",                    folder: "backlog",    label: "Backlog" },
+  { id: "active",                     folder: "active",     label: "Active" },
+  { id: "awaiting_amendment_review",  folder: "amendments", label: "Awaiting Amendment Review" },
+  { id: "done",                       folder: "done",       label: "Done" },
+  { id: "blocked",                    folder: "blocked",    label: "Blocked" }
+];
+const STATUS_BY_FOLDER = Object.fromEntries(COLUMNS.map(c => [c.folder, c.id]));
+const FOLDER_BY_STATUS = Object.fromEntries(COLUMNS.map(c => [c.id, c.folder]));
+
+/* ---- in-memory state ---- */
+const state = {
+  rootHandle: null,
+  cards: [],        // { id, file, dir, status, folder, frontmatter, body, raw }
+  byStatus: {}      // status -> [cards]
+};
+
+/* ===================================================================
+   IndexedDB - persist the FSA handle so Drew doesn't re-pick every session
+   =================================================================== */
+const DB_NAME = "agile-cards-dashboard";
+const STORE = "handles";
+
+function openDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(STORE);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror   = () => reject(req.error);
+  });
+}
+async function dbGet(key) {
+  const db = await openDb();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(STORE, "readonly");
+    const r  = tx.objectStore(STORE).get(key);
+    r.onsuccess = () => res(r.result);
+    r.onerror   = () => rej(r.error);
+  });
+}
+async function dbPut(key, value) {
+  const db = await openDb();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(STORE, "readwrite");
+    tx.objectStore(STORE).put(value, key);
+    tx.oncomplete = () => res();
+    tx.onerror    = () => rej(tx.error);
+  });
+}
+
+/* ===================================================================
+   YAML parser - frontmatter subset.
+   Handles: scalars (string, number, bool, null), quoted strings,
+   inline empty lists [], block lists with '- ', and # comments.
+   =================================================================== */
+function parseFrontmatter(text) {
+  // strip CR for safety on Windows-saved files
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  if (lines[0].trim() !== "---") return { frontmatter: {}, body: text };
+
+  let i = 1;
+  let fmEnd = -1;
+  for (; i < lines.length; i++) {
+    if (lines[i].trim() === "---") { fmEnd = i; break; }
+  }
+  if (fmEnd === -1) return { frontmatter: {}, body: text };
+
+  const fmLines = lines.slice(1, fmEnd);
+  const body    = lines.slice(fmEnd + 1).join("\n").replace(/^\n+/, "");
+
+  const fm = {};
+  let currentKey = null;
+  let currentList = null;
+
+  for (let raw of fmLines) {
+    // strip trailing # comments (but only when not inside quotes)
+    const noComment = stripComment(raw);
+    if (noComment.trim() === "") { currentKey = null; currentList = null; continue; }
+
+    // list item
+    const listMatch = /^\s+-\s*(.*)$/.exec(noComment);
+    if (listMatch && currentList !== null) {
+      currentList.push(parseScalar(listMatch[1]));
+      continue;
+    }
+
+    // top-level key: value
+    const kv = /^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$/.exec(noComment);
+    if (!kv) { continue; }
+    const k = kv[1];
+    const v = kv[2];
+
+    if (v === "" ) {
+      // value continues on next lines as a block list
+      fm[k] = [];
+      currentKey = k;
+      currentList = fm[k];
+    } else if (v === "[]") {
+      fm[k] = [];
+      currentKey = k;
+      currentList = null;
+    } else {
+      fm[k] = parseScalar(v);
+      currentKey = k;
+      currentList = null;
+    }
+  }
+
+  return { frontmatter: fm, body };
+}
+
+function stripComment(line) {
+  // do not strip # inside quoted strings
+  let inSingle = false, inDouble = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"' && !inSingle) inDouble = !inDouble;
+    else if (c === "'" && !inDouble) inSingle = !inSingle;
+    else if (c === "#" && !inSingle && !inDouble) {
+      // only treat as comment if preceded by whitespace or start
+      if (i === 0 || /\s/.test(line[i - 1])) return line.slice(0, i);
+    }
+  }
+  return line;
+}
+
+function parseScalar(v) {
+  v = v.trim();
+  if (v === "" || v === "null" || v === "~") return null;
+  if (v === "true")  return true;
+  if (v === "false") return false;
+  // quoted string
+  if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+    return v.slice(1, -1);
+  }
+  // integer or float
+  if (/^-?\d+$/.test(v))           return parseInt(v, 10);
+  if (/^-?\d+\.\d+$/.test(v))      return parseFloat(v);
+  return v;
+}
+
+/* ===================================================================
+   YAML serializer - rewrite a single scalar key while preserving the
+   rest of the document character-for-character. We only need to change
+   the `status:` line on drag-drop, so a targeted regex replace is
+   safer than a full re-emit.
+   =================================================================== */
+function rewriteStatus(rawCardText, newStatus) {
+  const re = /^(status\s*:\s*)([^\r\n#]*?)(\s*(?:#.*)?)$/m;
+  if (!re.test(rawCardText)) {
+    // no status field. Insert one after the opening ---.
+    return rawCardText.replace(/^---\n/, `---\nstatus: ${newStatus}\n`);
+  }
+  return rawCardText.replace(re, `$1${newStatus}$3`);
+}
+
+/* ===================================================================
+   Markdown renderer - minimal hand-rolled. Handles:
+   ATX headings, fenced code blocks, lists (ul/ol), bold, italic,
+   inline code, links, paragraphs, blockquotes.
+   No HTML pass-through (everything escapes first).
+   =================================================================== */
+function renderMarkdown(src) {
+  const lines = src.replace(/\r\n/g, "\n").split("\n");
+  const out = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // fenced code
+    const fence = /^```(\w*)\s*$/.exec(line);
+    if (fence) {
+      const lang = fence[1];
+      i++;
+      const code = [];
+      while (i < lines.length && !/^```\s*$/.test(lines[i])) {
+        code.push(lines[i]); i++;
+      }
+      i++;
+      out.push(`<pre><code${lang ? ` data-lang="${esc(lang)}"` : ""}>${esc(code.join("\n"))}</code></pre>`);
+      continue;
+    }
+
+    // heading
+    const h = /^(#{1,6})\s+(.*)$/.exec(line);
+    if (h) {
+      const lvl = h[1].length;
+      out.push(`<h${lvl}>${renderInline(h[2])}</h${lvl}>`);
+      i++; continue;
+    }
+
+    // blockquote
+    if (/^>\s?/.test(line)) {
+      const buf = [];
+      while (i < lines.length && /^>\s?/.test(lines[i])) {
+        buf.push(lines[i].replace(/^>\s?/, ""));
+        i++;
+      }
+      out.push(`<blockquote>${renderInline(buf.join(" "))}</blockquote>`);
+      continue;
+    }
+
+    // unordered list
+    if (/^[-*]\s+/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^[-*]\s+/.test(lines[i])) {
+        let item = lines[i].replace(/^[-*]\s+/, "");
+        i++;
+        // continuation lines (indented)
+        while (i < lines.length && /^\s{2,}\S/.test(lines[i])) {
+          item += " " + lines[i].trim();
+          i++;
+        }
+        items.push(`<li>${renderInline(item)}</li>`);
+      }
+      out.push(`<ul>${items.join("")}</ul>`);
+      continue;
+    }
+
+    // ordered list
+    if (/^\d+\.\s+/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^\d+\.\s+/.test(lines[i])) {
+        let item = lines[i].replace(/^\d+\.\s+/, "");
+        i++;
+        while (i < lines.length && /^\s{2,}\S/.test(lines[i])) {
+          item += " " + lines[i].trim();
+          i++;
+        }
+        items.push(`<li>${renderInline(item)}</li>`);
+      }
+      out.push(`<ol>${items.join("")}</ol>`);
+      continue;
+    }
+
+    // blank line
+    if (line.trim() === "") { i++; continue; }
+
+    // paragraph (consume until blank or block start)
+    const para = [line];
+    i++;
+    while (
+      i < lines.length &&
+      lines[i].trim() !== "" &&
+      !/^(#{1,6}\s|```|>\s?|[-*]\s+|\d+\.\s+)/.test(lines[i])
+    ) {
+      para.push(lines[i]); i++;
+    }
+    out.push(`<p>${renderInline(para.join(" "))}</p>`);
+  }
+
+  return out.join("\n");
+}
+
+function esc(s) {
+  return s.replace(/[&<>"']/g, c => (
+    { "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]
+  ));
+}
+
+function renderInline(s) {
+  // escape first, then re-introduce inline markup
+  s = esc(s);
+  // inline code (do this before bold/italic so backticks win)
+  s = s.replace(/`([^`]+)`/g, (_, c) => `<code>${c}</code>`);
+  // links [text](url)
+  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, t, u) =>
+    `<a href="${u}" target="_blank" rel="noopener">${t}</a>`);
+  // bold
+  s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/__([^_]+)__/g, "<strong>$1</strong>");
+  // italic
+  s = s.replace(/(^|[\s(])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+  s = s.replace(/(^|[\s(])_([^_\n]+)_/g,   "$1<em>$2</em>");
+  return s;
+}
+
+/* ===================================================================
+   Folder I/O via the File System Access API
+   =================================================================== */
+async function loadAllCards() {
+  state.cards = [];
+  state.byStatus = {};
+  for (const col of COLUMNS) state.byStatus[col.id] = [];
+
+  if (!state.rootHandle) return;
+
+  for (const col of COLUMNS) {
+    let dirHandle;
+    try {
+      dirHandle = await state.rootHandle.getDirectoryHandle(col.folder, { create: false });
+    } catch (e) {
+      // folder missing. Skip; it'll just show empty.
+      continue;
+    }
+    for await (const entry of dirHandle.values()) {
+      if (entry.kind !== "file") continue;
+      if (!entry.name.endsWith(".md")) continue;
+      try {
+        const file = await entry.getFile();
+        const raw  = await file.text();
+        const { frontmatter, body } = parseFrontmatter(raw);
+        const card = {
+          id: frontmatter.id || entry.name.replace(/\.md$/, ""),
+          fileName: entry.name,
+          dir: col.folder,
+          status: col.id,
+          frontmatter,
+          body,
+          raw
+        };
+        state.cards.push(card);
+        state.byStatus[col.id].push(card);
+      } catch (err) {
+        console.error("Failed to read card", entry.name, err);
+      }
+    }
+  }
+}
+
+async function moveCard(card, newStatus) {
+  const fromFolder = FOLDER_BY_STATUS[card.status];
+  const toFolder   = FOLDER_BY_STATUS[newStatus];
+  if (!fromFolder || !toFolder) throw new Error(`Bad status mapping ${card.status} -> ${newStatus}`);
+  if (fromFolder === toFolder)  return; // no-op
+
+  const fromDir = await state.rootHandle.getDirectoryHandle(fromFolder, { create: false });
+  const toDir   = await state.rootHandle.getDirectoryHandle(toFolder,   { create: true  });
+
+  const updatedRaw = rewriteStatus(card.raw, newStatus);
+
+  // write new file
+  const newFile  = await toDir.getFileHandle(card.fileName, { create: true });
+  const writable = await newFile.createWritable();
+  await writable.write(updatedRaw);
+  await writable.close();
+
+  // remove old file
+  await fromDir.removeEntry(card.fileName);
+
+  // update in-memory record
+  card.raw = updatedRaw;
+  card.frontmatter.status = newStatus;
+  card.status = newStatus;
+  card.dir    = toFolder;
+}
+
+/* ===================================================================
+   Rendering
+   =================================================================== */
+const $main    = document.getElementById("main");
+const $overlay = document.getElementById("overlay");
+const $panel   = document.getElementById("panel");
+
+function renderBoard() {
+  $main.innerHTML = "";
+  const board = document.createElement("div");
+  board.className = "board";
+
+  for (const col of COLUMNS) {
+    const cards = state.byStatus[col.id] || [];
+    const $col = document.createElement("section");
+    $col.className = "column";
+    $col.dataset.status = col.id;
+
+    $col.innerHTML = `
+      <div class="column-head">
+        <span>${esc(col.label)}</span>
+        <span class="count">${cards.length}</span>
+      </div>
+      <div class="column-body"></div>
+    `;
+    const $body = $col.querySelector(".column-body");
+
+    if (cards.length === 0) {
+      const $empty = document.createElement("div");
+      $empty.className = "column-empty";
+      $empty.textContent = "no cards here";
+      $body.appendChild($empty);
+    } else {
+      for (const card of cards) {
+        $body.appendChild(renderCardTile(card));
+      }
+    }
+
+    wireColumnDrop($col);
+    board.appendChild($col);
+  }
+
+  $main.appendChild(board);
+}
+
+function renderCardTile(card) {
+  const fm = card.frontmatter;
+  const tier = (typeof fm.points === "number") ? fm.points : null;
+  const tierClass = (tier && tier >= 1 && tier <= 6) ? `tier-${tier}` : "tier-3";
+  const tierLabel = tier !== null ? `T${tier}` : "T?";
+
+  const proj    = projectName(fm.project);
+  const claimed = fm.claimed_by;
+  const ctx     = extractContext(card.body);
+
+  const $el = document.createElement("div");
+  $el.className = "card";
+  $el.draggable = true;
+  $el.dataset.cardId = card.id;
+  $el.innerHTML = `
+    <div class="card-top">
+      <div class="card-title">${esc(fm.title || card.id)}</div>
+      <span class="tier ${tierClass}" title="${esc(tierLabel)}">${esc(tierLabel)}</span>
+    </div>
+    <div class="card-meta">
+      ${proj    ? `<span class="pill">${esc(proj)}</span>` : ""}
+      ${claimed ? `<span class="pill">by ${esc(claimed)}</span>` : ""}
+    </div>
+    ${ctx ? `<div class="card-context">${esc(ctx)}</div>` : ""}
+  `;
+  $el.addEventListener("click", () => openPanel(card));
+  wireCardDrag($el, card);
+  return $el;
+}
+
+function projectName(proj) {
+  if (!proj) return "";
+  // Last segment of an absolute path (handles both \ and /).
+  const parts = String(proj).split(/[\\/]/).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : String(proj);
+}
+
+function extractContext(body) {
+  if (!body) return "";
+  // Pull the first paragraph under "## Context" if present.
+  const m = /(^|\n)##\s*Context\s*\n+([\s\S]*?)(\n##\s|$)/.exec(body);
+  const block = m ? m[2] : body;
+  // First non-empty paragraph
+  const para = block.trim().split(/\n\s*\n/)[0].replace(/\s+/g, " ").trim();
+  return para.length > 100 ? para.slice(0, 100).trimEnd() + "..." : para;
+}
+
+/* ---- drag-drop ---- */
+let draggedCard = null;
+let draggedEl   = null;
+
+function wireCardDrag(el, card) {
+  el.addEventListener("dragstart", e => {
+    draggedCard = card;
+    draggedEl   = el;
+    el.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", card.id);
+  });
+  el.addEventListener("dragend", () => {
+    el.classList.remove("dragging");
+    document.querySelectorAll(".column.drag-over")
+      .forEach(c => c.classList.remove("drag-over"));
+    draggedCard = null;
+    draggedEl   = null;
+  });
+}
+
+function wireColumnDrop(colEl) {
+  colEl.addEventListener("dragover", e => {
+    if (!draggedCard) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    colEl.classList.add("drag-over");
+  });
+  colEl.addEventListener("dragleave", e => {
+    if (e.target === colEl || e.relatedTarget === null) {
+      colEl.classList.remove("drag-over");
+    }
+  });
+  colEl.addEventListener("drop", async e => {
+    e.preventDefault();
+    colEl.classList.remove("drag-over");
+    if (!draggedCard) return;
+
+    const targetStatus = colEl.dataset.status;
+    const card = draggedCard;
+    if (card.status === targetStatus) return;
+
+    // optimistic: move tile right away
+    const prevStatus = card.status;
+    const prevEl     = draggedEl;
+    try {
+      await moveCard(card, targetStatus);
+      toast(`Moved ${card.id} -> ${targetStatus}`, "ok");
+      // re-bucket
+      state.byStatus[prevStatus]  = state.byStatus[prevStatus].filter(c => c !== card);
+      state.byStatus[targetStatus].push(card);
+      renderBoard();
+    } catch (err) {
+      console.error(err);
+      toast(`Move failed: ${err.message || err}. Reverted.`, "error");
+      // no in-memory change happened, just rerender to restore visual
+      renderBoard();
+    }
+  });
+}
+
+/* ---- detail panel ---- */
+function openPanel(card) {
+  $panel.innerHTML = "";
+
+  const head = document.createElement("div");
+  head.className = "panel-head";
+  head.innerHTML = `
+    <h2>${esc(card.frontmatter.title || card.id)}</h2>
+    <button class="close" aria-label="Close">x</button>
+  `;
+  head.querySelector(".close").addEventListener("click", closePanel);
+  $panel.appendChild(head);
+
+  // Frontmatter section
+  const fmSection = document.createElement("section");
+  fmSection.innerHTML = `<h3>Frontmatter</h3>`;
+  const fmList = document.createElement("div");
+  fmList.className = "frontmatter";
+  for (const [k, v] of Object.entries(card.frontmatter)) {
+    const row = document.createElement("div");
+    row.className = "row";
+    row.innerHTML = `<div class="k">${esc(k)}</div><div class="v">${formatVal(v)}</div>`;
+    fmList.appendChild(row);
+  }
+  fmSection.appendChild(fmList);
+  $panel.appendChild(fmSection);
+
+  // Body section
+  const bodySection = document.createElement("section");
+  bodySection.innerHTML = `<h3>Body</h3>`;
+  const body = document.createElement("div");
+  body.className = "body-md";
+  body.innerHTML = renderMarkdown(card.body || "");
+  bodySection.appendChild(body);
+  $panel.appendChild(bodySection);
+
+  $overlay.classList.add("show");
+}
+
+function formatVal(v) {
+  if (v === null || v === undefined)
+    return `<span class="null">null</span>`;
+  if (Array.isArray(v)) {
+    if (v.length === 0) return `<span class="null">[]</span>`;
+    return v.map(x => esc(String(x))).map(x => `- ${x}`).join("\n");
+  }
+  return esc(String(v));
+}
+
+function closePanel() { $overlay.classList.remove("show"); }
+$overlay.addEventListener("click", e => { if (e.target === $overlay) closePanel(); });
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") closePanel();
+});
+
+/* ---- toasts ---- */
+const $toasts = document.getElementById("toasts");
+function toast(msg, kind) {
+  const t = document.createElement("div");
+  t.className = "toast" + (kind ? " " + kind : "");
+  t.textContent = msg;
+  $toasts.appendChild(t);
+  setTimeout(() => { t.style.opacity = "0"; t.style.transition = "opacity 0.3s"; }, 3000);
+  setTimeout(() => t.remove(), 3500);
+}
+
+/* ===================================================================
+   Bootstrap
+   =================================================================== */
+async function pickFolder() {
+  try {
+    const handle = await window.showDirectoryPicker({ mode: "readwrite" });
+    state.rootHandle = handle;
+    await dbPut("todoRoot", handle);
+    await afterFolderConnected();
+  } catch (err) {
+    if (err.name === "AbortError") return;
+    console.error(err);
+    toast(`Folder pick failed: ${err.message}`, "error");
+  }
+}
+
+async function tryRestoreFolder() {
+  try {
+    const handle = await dbGet("todoRoot");
+    if (!handle) return false;
+    // Cannot prompt without a user gesture; check the existing grant only.
+    const perm = await handle.queryPermission({ mode: "readwrite" });
+    if (perm === "granted") {
+      state.rootHandle = handle;
+      return true;
+    }
+    return false;
+  } catch (err) {
+    console.error(err);
+    return false;
+  }
+}
+
+async function reconnectFolder() {
+  try {
+    const handle = await dbGet("todoRoot");
+    if (!handle) { await pickFolder(); return; }
+    const perm = await handle.requestPermission({ mode: "readwrite" });
+    if (perm === "granted") {
+      state.rootHandle = handle;
+      await afterFolderConnected();
+    } else {
+      toast("Permission denied. Pick the folder again.", "error");
+      await pickFolder();
+    }
+  } catch (err) {
+    console.error(err);
+    await pickFolder();
+  }
+}
+
+async function afterFolderConnected() {
+  document.getElementById("folderLabel").textContent = `folder: ${state.rootHandle.name}`;
+  document.getElementById("changeFolderBtn").style.display = "";
+  document.getElementById("refreshBtn").style.display      = "";
+  await refreshBoard();
+}
+
+async function refreshBoard() {
+  try {
+    await loadAllCards();
+    renderBoard();
+  } catch (err) {
+    console.error(err);
+    toast(`Refresh failed: ${err.message}`, "error");
+  }
+}
+
+function renderSplash(reconnect) {
+  $main.innerHTML = "";
+  const splash = document.createElement("div");
+  splash.className = "splash";
+  if (reconnect) {
+    splash.innerHTML = `
+      <h2>Reconnect your todo folder</h2>
+      <p>You picked it before, but Chrome needs you to re-confirm access for this session.</p>
+      <button id="reconnectBtn">Reconnect folder</button>
+      <button class="btn" id="pickInstead">Or pick a different folder</button>
+    `;
+    $main.appendChild(splash);
+    document.getElementById("reconnectBtn").addEventListener("click", reconnectFolder);
+    document.getElementById("pickInstead" ).addEventListener("click", pickFolder);
+  } else {
+    splash.innerHTML = `
+      <h2>Select your todo folder</h2>
+      <p>Pick the folder that holds your <code>backlog/</code>, <code>active/</code>, <code>amendments/</code>, <code>done/</code>, and <code>blocked/</code> subfolders. Default location is <code>C:\\dev\\todo\\</code>.</p>
+      <button id="pickBtn">Select folder</button>
+    `;
+    $main.appendChild(splash);
+    document.getElementById("pickBtn").addEventListener("click", pickFolder);
+  }
+}
+
+function renderBrowserWarn() {
+  $main.innerHTML = "";
+  const wrap = document.createElement("div");
+  wrap.className = "splash";
+  wrap.innerHTML = `
+    <div class="browser-warn">
+      <strong>This dashboard needs Chrome or Edge.</strong><br>
+      It relies on the File System Access API to read and write your card files
+      directly. Firefox and Safari don't ship that API yet. Open the same file
+      in Chrome or Edge and the board will come up.
+    </div>
+  `;
+  $main.appendChild(wrap);
+}
+
+document.getElementById("refreshBtn"     ).addEventListener("click", refreshBoard);
+document.getElementById("changeFolderBtn").addEventListener("click", pickFolder);
+
+(async function init() {
+  if (typeof window.showDirectoryPicker !== "function") {
+    renderBrowserWarn();
+    return;
+  }
+  const restored = await tryRestoreFolder();
+  if (restored) {
+    await afterFolderConnected();
+  } else {
+    // do we even have a stored handle?
+    const had = await dbGet("todoRoot");
+    renderSplash(!!had);
+  }
+})();
+</script>
+</body>
+</html>
