@@ -1,11 +1,11 @@
-# Handoff: /cards extracted into agile_cards repo
+# Handoff: /cards extracted into agile-cards repo
 
 **Date:** 2026-05-17
 **Session:** Cowork, repo extraction
 **Branches involved:**
 - `dev-meta` main (received the merged v1.1 PR)
 - `dev-meta` `chore/cards-migrated-to-agile_cards` (open PR #2)
-- `agile_cards` main (new repo, no remote yet)
+- `agile-cards` main (new repo, published at https://github.com/Ginkobaloba/agile-cards)
 
 **Predecessor handoffs:**
 - `HANDOFF_2026-05-16_cards-skill-v1.md` (in this folder)
@@ -85,7 +85,7 @@ restriction was the cleaner cut.
 
 ## State after this session
 
-### agile_cards (`C:\dev\agile_cards`, no remote)
+### agile-cards (`C:\dev\agile-cards`, pushed to GitHub)
 
 Layout:
 
@@ -158,77 +158,89 @@ references it but does not contain it.
 
 ---
 
+## Decisions locked in this session
+
+### License: PolyForm Noncommercial 1.0.0
+
+Decided 2026-05-17. Reasoning: best fit for "show the code, monetize
+later." Anyone can read, study, fork, modify, and use for
+noncommercial purposes (personal, research, education, nonprofit,
+government). Commercial use requires a separate arrangement, which
+keeps the path open to license this differently for a product or
+contract later without retroactively granting commercial rights to
+public clones.
+
+Implemented in commit `e3d03d0`
+("chore: add PolyForm Noncommercial 1.0.0 license"). The full license
+text from the official PolyForm site lives at `LICENSE`, with a
+`Required Notice: Copyright 2026 Drew Mattick` line near the top.
+README references it. MIT and Apache-2.0 were the other candidates
+and were rejected because both permit commercial use.
+
+### Repo name: kebab-case
+
+Decided 2026-05-17. The local folder was renamed from
+`C:\dev\agile_cards` to `C:\dev\agile-cards` to match the rest of the
+Ginkobaloba kebab-case convention (`dev-meta`, `project-vector`,
+`career-search`).
+
+### Visibility: public
+
+Decided 2026-05-17. Portfolio value to recruiters and other developers
+outweighs the privacy benefit. Commercial protection comes from the
+PolyForm Noncommercial license, not from access control.
+
+### Fate of `_meta/skills/cards/`: tombstone now, delete later
+
+Decided 2026-05-17. PR #2 on dev-meta keeps the existing folder in
+place with a MOVED notice on its README. The full folder gets deleted
+in a follow-up PR once Drew confirms `agile-cards` is the canonical
+source and nothing depends on the stale copy. Submodule conversion
+considered and rejected for now as more friction than value.
+
+## Live state after this session
+
+### Remote: `https://github.com/Ginkobaloba/agile-cards`
+
+Public, default branch `main`. Description: "A tiered card system for
+solo-with-agents agile delivery. Dual-axis model routing,
+parallel-claimable cards, machine-checkable acceptance criteria."
+
+Local HEAD `e3d03d0` matches `origin/main`. Push verified via
+`git ls-remote origin main`.
+
+Created via:
+
+```powershell
+cd C:\dev\agile-cards
+gh repo create Ginkobaloba/agile-cards --public --source=. --remote=origin --description "A tiered card system for solo-with-agents agile delivery. Dual-axis model routing, parallel-claimable cards, machine-checkable acceptance criteria."
+git push -u origin main
+```
+
 ## What's still required from Drew
 
-### Decision: license
+### Action: review and merge PR #2 on dev-meta
 
-`LICENSE` is a placeholder. Pick MIT or Apache-2.0. Default
-recommendation: MIT if this stays a portfolio piece, Apache-2.0 if it
-evolves into a product where patent grants matter. Replace the
-placeholder content with the actual license text and add a header line
-to `SKILL.md` and `RUNNER_CONTRACT.md` if you want explicit per-file
-SPDX identifiers.
+`https://github.com/Ginkobaloba/dev-meta/pull/2` is open. The tombstone
+README in `_meta/skills/cards/` was updated in this session to point at
+the live `https://github.com/Ginkobaloba/agile-cards` URL (no more
+`<TBD>` placeholder). Review and merge when ready. Until that PR
+lands, dev-meta `main` still ships the unmodified old copy of the
+cards skill, which would confuse anyone walking in cold.
 
-### Decision: exact GitHub repo name and org
+### Follow-up: delete `_meta/skills/cards/` entirely
 
-`agile_cards` is descriptive but might collide with an existing repo
-name in your style. Alternatives: `cards`, `cards-skill`, `claude-cards`,
-`agile-cards` (hyphen instead of underscore). Convention check: the
-other Ginkobaloba repos use kebab-case (`dev-meta`, `project-vector`,
-`career-search`). Recommend renaming the local folder to `agile-cards`
-and using `Ginkobaloba/agile-cards` as the remote, for consistency.
-
-### Decision: fate of `_meta/skills/cards/`
-
-Currently kept in place with a tombstone README. Options:
-
-- **Keep until publication, then delete.** What PR #2 sets up. Safest.
-- **Delete immediately in PR #2.** Less surface for drift but loses the
-  fallback if the new repo isn't reachable for some reason.
-- **Convert to a submodule pointing at the new repo.** Cleanest long
-  term but blocked on the GitHub remote existing.
-
-Default: keep the current PR #2 behavior, delete the folder in a
-follow-up commit after `agile_cards` is published.
-
-### Action: merge PR #2 on `dev-meta`
-
-`https://github.com/Ginkobaloba/dev-meta/pull/2` is open. Review and
-merge when you're ready. Nothing in this migration is "done" until
-that's merged, because right now `_meta/skills/cards/` on main is the
-unmodified old version and would confuse anyone walking in cold.
-
-### Action: create GitHub remote for `agile_cards` and push
-
-The local repo is at `C:\dev\agile_cards` with no remote. Decide
-visibility (public vs private) and which org (Ginkobaloba or a
-different one). When ready, run:
-
-```powershell
-cd C:\dev\agile_cards
-gh repo create Ginkobaloba/agile_cards --source=. --remote=origin --private --description "Planning skill that decomposes user stories into parallel-claimable cards"
-git push -u origin main
-```
-
-Or if you prefer to do it by hand:
-
-```powershell
-cd C:\dev\agile_cards
-git remote add origin https://github.com/Ginkobaloba/agile_cards.git
-git push -u origin main
-```
-
-After the remote is published, update the MOVED notice in
-`_meta/skills/cards/README.md` to point at the real URL (currently
-`https://github.com/<TBD>/agile_cards`), and delete
-`_meta/skills/cards/` entirely in a follow-up PR.
+After PR #2 is merged and `agile-cards` is proven to be the live
+source, open a follow-up PR on dev-meta that deletes the whole
+`skills/cards/` folder. Suggested commit message:
+`chore: remove stale skills/cards tombstone (lives at agile-cards now)`.
 
 ---
 
 ## Open questions for future sessions
 
 1. Should the sprint scheduler / dashboard, when it gets built, live
-   as a submodule of `agile_cards` or as its own peer repo? The README
+   as a submodule of `agile-cards` or as its own peer repo? The README
    currently promises a submodule. Submodule pros: one clone gets you
    the whole system. Cons: submodule UX is famously rough. Worth
    revisiting when the scheduler actually starts shipping.
@@ -248,7 +260,7 @@ After the remote is published, update the MOVED notice in
 
 ## Sanity check results
 
-- `git status` clean on `agile_cards` main.
+- `git status` clean on `agile-cards` main.
 - All expected artifacts present (SKILL.md, RUNNER_CONTRACT.md,
   templates/, examples/, tests/, docs/handoffs/).
 - `tests/atomic_rename_test.ps1` parses cleanly via the
