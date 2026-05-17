@@ -1,9 +1,11 @@
-# agile_cards
+# agile-cards
 
 A planning skill that decomposes a user story (or a pasted discussion) into
 small, independently claimable cards a fleet of agents can run in parallel.
 
-`agile_cards` is the planner. It writes cards to a runtime data folder
+Licensed under PolyForm Noncommercial 1.0.0. See [LICENSE](./LICENSE).
+
+`agile-cards` is the planner. It writes cards to a runtime data folder
 (`C:\dev\todo\` by default) and a batch manifest alongside them. A separate
 runner watches that folder, spawns executor agents at the model tier each
 card was sized for, and drives cards from `backlog/` -> `active/` -> `done/`
@@ -91,12 +93,11 @@ release cadence.
 
 ## License
 
-To be decided. Candidates are MIT and Apache-2.0; the choice depends on
-whether this lands as a pure portfolio piece (MIT is simpler) or evolves
-into a product with patent surface (Apache-2.0 has explicit patent grant).
-See `LICENSE` for the current placeholder and the
-[migration handoff](./docs/handoffs/HANDOFF_2026-05-17_repo-migration.md)
-for the open question.
+Licensed under the [PolyForm Noncommercial License 1.0.0](./LICENSE).
+The short version: anyone is free to read, study, modify, and use this
+for noncommercial purposes (personal projects, research, education,
+nonprofits, government). Commercial use requires a separate
+arrangement. Copyright 2026 Drew Mattick.
 
 ## History
 
@@ -104,4 +105,4 @@ This repo was extracted from `dev-meta/skills/cards/` in May 2026 via
 `git subtree split`, so the commit log preserves the original authorship
 and timestamps of the planning work. See
 [`docs/handoffs/HANDOFF_2026-05-17_repo-migration.md`](./docs/handoffs/HANDOFF_2026-05-17_repo-migration.md)
-for the migration details and the steps to add a GitHub remote.
+for the migration details.
