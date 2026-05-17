@@ -128,14 +128,11 @@ Commit status: see "Commit and PR state" below.
 
 ## Commit and PR state
 
-To be filled in by the closing step of this session. Update before
-handoff is final.
-
 ```
 Branch:  feature/cards-v1.1-consultant-fixes
-HEAD:    <git rev-parse HEAD after commit>
-Pushed:  yes / no
-PR:      <url, or "not opened">
+HEAD:    8afd68a cards: v1.1 consultant fixes (AC immutability, worktree isolation, HITL)
+Pushed:  yes (origin/feature/cards-v1.1-consultant-fixes)
+PR:      https://github.com/Ginkobaloba/dev-meta/pull/1
 ```
 
 ---
