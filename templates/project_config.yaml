@@ -1,0 +1,76 @@
+# Per-project config for the /cards workflow.
+#
+# Lives at <project_root>\.cards-config.yaml. The /cards skill reads it
+# during step 1 (resolve context). If absent, defaults apply.
+#
+# This file is the project's opt-in to non-default /cards behavior.
+
+version: 1
+
+# Branch strategy.
+#   full: one feature branch per card (card/<id>), one PR per card.
+#   lean: all cards in a batch share one branch (cards/<batch_id>),
+#         one PR per batch.
+mode: full   # full | lean
+
+# Base branch every card branches off of, unless an individual card
+# overrides via its frontmatter `base_branch:` field.
+base_branch: main
+
+# Merge gate overrides. By default the gate is tier-aware (see README).
+# A project can tighten the gate but not loosen it for high-stakes work.
+merge_gates:
+  # Tier 1, 2: low stakes, low difficulty (haiku family).
+  low:
+    auto_merge: true
+    require_lint: true
+    require_tests: true
+
+  # Tier 3, 4: medium stakes (sonnet family).
+  medium:
+    auto_merge: true
+    require_lint: true
+    require_tests: true
+    require_sibling_review: true   # cheap second agent reads the diff
+
+  # Tier 5, 6: high stakes (opus family). pin_required=true forces this
+  # path regardless of the project's preference.
+  high:
+    auto_merge: false
+    require_lint: true
+    require_tests: true
+    require_human_approval: true   # always true for high stakes
+
+# Default model floor cap. Some projects may want to forbid haiku
+# entirely (e.g. anything customer-facing). The runner will never pick a
+# model below this floor for any card in this project, even tier 1.
+# Comment out to use card-level floor only.
+# project_model_floor: sonnet
+
+# Files or globs that the planner should treat as parallel-hazardous
+# regardless of card content. If two cards both `touches:` something in
+# this list, the manifest flags them.
+hot_paths:
+  - src/api/middleware/**
+  - src/db/migrations/**
+
+# Orphan reclaim. If a card sits in active/ with last_heartbeat older
+# than this, the next runner pass moves it back to backlog/ and clears
+# the claim metadata. Tune up for long-running cards, down for fleets
+# that should fail fast.
+orphan_timeout_minutes: 120
+
+# Optional: path to the source-of-truth story doc. If set, the runner
+# can re-hash this file on every claim and compare against the card's
+# story_hash. Mismatch flags the card for re-triage instead of executing
+# against drifted intent. Leave commented out for ad-hoc stories where
+# the planner input is the only source.
+# story_source_path: docs/rfcs/rate-limiting.md
+
+# Optional. Override the default deep-mode token threshold for switching
+# from 2-agent to 3-agent planning.
+# deep_plan_token_threshold: 3000
+
+# Optional. Where the runner posts status updates back to (Slack, file,
+# etc). This is a runner concern; the /cards skill ignores it.
+# runner_callback: file://C:/dev/todo/_runner.log

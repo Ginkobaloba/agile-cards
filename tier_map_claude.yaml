@@ -1,0 +1,79 @@
+# tier_map_claude.yaml
+#
+# Maps abstract tier (1-6) to a concrete Claude model + extended_thinking
+# setting. The /cards skill reads this at card-creation time to populate
+# each card's `model` and `extended_thinking` fields.
+#
+# To swap providers later, add tier_map_<provider>.yaml and re-point the
+# skill at it. Cards themselves stay LLM-agnostic in schema; only the
+# model field changes.
+#
+# Tier matrix (stakes x difficulty):
+#   stakes\difficulty   shallow   deep
+#   low                 1         2
+#   medium              3         4
+#   high                5         6
+
+version: 1
+provider: claude
+updated: 2026-05-16
+
+tiers:
+  1:
+    label: "low stakes, shallow"
+    model: claude-haiku-4-5-20251001
+    extended_thinking: false
+    thinking_depth: shallow
+    model_floor: haiku
+    pin_required: false
+    typical_use: "trivial edits, copy tweaks, single-file refactors with tests"
+
+  2:
+    label: "low stakes, deep"
+    model: claude-haiku-4-5-20251001
+    extended_thinking: true
+    thinking_depth: deep
+    model_floor: haiku
+    pin_required: false
+    typical_use: "low-risk work that still needs reasoning; e.g. unusual data shapes"
+
+  3:
+    label: "medium stakes, shallow"
+    model: claude-sonnet-4-6
+    extended_thinking: false
+    thinking_depth: shallow
+    model_floor: sonnet
+    pin_required: false
+    typical_use: "feature work in a shared module, refactors that touch a few files"
+
+  4:
+    label: "medium stakes, deep"
+    model: claude-sonnet-4-6
+    extended_thinking: true
+    thinking_depth: deep
+    model_floor: sonnet
+    pin_required: false
+    typical_use: "design-touching changes, schema migrations on dev branches"
+
+  5:
+    label: "high stakes, shallow"
+    model: claude-opus-4-7
+    extended_thinking: false
+    thinking_depth: shallow
+    model_floor: opus
+    pin_required: true
+    typical_use: "production-touching mechanical work, e.g. secrets rotation"
+
+  6:
+    label: "high stakes, deep"
+    model: claude-opus-4-7
+    extended_thinking: true
+    thinking_depth: deep
+    model_floor: opus
+    pin_required: true
+    typical_use: "architecture decisions, security boundary changes, prod migrations"
+
+# Stakes axis is the hard constraint. Even if a card is tier 2 (low stakes
+# but deep), the model_floor stays haiku. The runner may upgrade above the
+# floor when the executor reports difficulty exceeded the planner's read,
+# but never below the floor.

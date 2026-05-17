@@ -1,0 +1,97 @@
+# batch manifest -- example and schema
+#
+# Written to C:\dev\todo\_batches\b<NNN>-manifest.yaml by the /cards skill
+# on completion of a successful planning pass.
+
+version: 1
+batch_id: b000
+created: 2026-05-16T14:30:00-07:00
+project: C:\dev\project-example
+mode: full          # full or lean
+deep_plan: false    # true if the 3-agent variant ran
+
+# The raw input fed to the planner. Full text is preserved here so the
+# runner can detect drift -- every card in this batch carries story_hash
+# = sha256(source.text), and the runner compares against the current
+# source-of-truth doc if project_config.story_source_path is set.
+source:
+  kind: user_story  # user_story | pasted_discussion | doc_path
+  text: |
+    As a service operator I want to rate-limit the public API so a single
+    misbehaving client can't degrade the experience for everyone.
+  # If kind=doc_path:
+  # path: C:\dev\project-example\docs\rfcs\rate-limiting.md
+
+# sha256 hex of source.text. Matches the story_hash field on each card
+# in this batch. Drift detection compares this against the live source
+# at runner claim time.
+story_hash: REPLACE_WITH_SHA256_HEX
+
+# Planning agents that ran. Both pinned to opus, both directly invoked.
+planning_agents:
+  - role: planner
+    model: claude-opus-4-7
+    extended_thinking: true
+  - role: reviewer
+    model: claude-opus-4-7
+    extended_thinking: true
+
+# Disagreements between planner and reviewer that did not resolve in the
+# revision round. Logged verbatim, not averaged. Drew triages.
+planner_disagreements:
+  - card_id: b000-03-add-rate-limit-middleware
+    field: points
+    planner_value: 3
+    reviewer_value: 4
+    notes: |
+      Reviewer thought the redis bucket implementation pushes this to
+      tier 4 (deep) because the executor needs to reason about race
+      conditions. Planner kept it at tier 3 (shallow) because the
+      bucket library handles atomicity. Defaulted to planner; flag for
+      Drew if the executor reports surprise.
+
+# Summary numbers the dry-run printed before approval.
+summary:
+  card_count: 7
+  points_histogram:
+    "1": 1
+    "2": 1
+    "3": 3
+    "4": 1
+    "5": 1
+    "6": 0
+  immediately_claimable: 4
+  parallel_hazards: 1   # cards with touch overlap, see below
+
+# The cards in this batch and their dependency edges.
+cards:
+  - id: b000-01-write-rate-limit-rfc
+    title: "Write rate-limit RFC"
+    points: 5
+    depends_on: []
+  - id: b000-02-pick-bucket-library
+    title: "Pick rate-limit library and document tradeoffs"
+    points: 2
+    depends_on: [b000-01-write-rate-limit-rfc]
+  - id: b000-03-add-rate-limit-middleware
+    title: "Add rate-limit middleware to API"
+    points: 3
+    depends_on: [b000-02-pick-bucket-library]
+  # ...
+
+dependency_edges:
+  - [b000-01-write-rate-limit-rfc, b000-02-pick-bucket-library]
+  - [b000-02-pick-bucket-library, b000-03-add-rate-limit-middleware]
+  # ...
+
+# Cards that share files in `touches`. The runner serializes these even
+# when their `depends_on` says they could run parallel.
+parallel_hazards:
+  - cards: [b000-03-add-rate-limit-middleware, b000-05-add-rate-limit-metrics]
+    overlap: [src/api/middleware/__init__.py]
+
+# Optional, free-form. Anything the planner wanted Drew to see at approval.
+planner_notes: |
+  The RFC is unusually high-stakes (tier 5) because it sets policy that
+  every API surface will inherit. Worth Drew's eyes before the executor
+  starts.

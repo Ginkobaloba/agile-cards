@@ -1,0 +1,40 @@
+# tier_pricing.yaml
+#
+# Per-model token prices, in USD per million tokens. The /cards skill
+# and any runner that enforces cost_cap_usd read this file at
+# display-time / cap-check-time to convert immutable token counts on
+# cards into USD figures. Cards themselves do NOT store USD; tokens
+# are the durable record, USD is derived.
+#
+# When prices change, edit this file. Cards on disk stay correct.
+# Old USD reports re-render at the new price; if you need historical
+# pricing for an audit, pin a copy in the batch manifest at plan time
+# (not yet automated -- enumerated as future work).
+#
+# IMPORTANT: verify the values below against the current Anthropic
+# public price page before relying on them for budget decisions.
+# These are the values Drew supplied at v1; they were not
+# independently re-verified in the session that wrote this file.
+
+version: 1
+updated: 2026-05-16
+verification_status: unverified-supplied-by-user
+
+claude-haiku-4-5-20251001:
+  input: 1.00      # USD per 1M input tokens
+  output: 5.00     # USD per 1M output tokens
+
+claude-sonnet-4-6:
+  input: 3.00
+  output: 15.00
+
+claude-opus-4-7:
+  input: 15.00
+  output: 75.00
+
+# To add another provider:
+# 1. Add a tier_map_<provider>.yaml so cards can be planned against it.
+# 2. Add each model's pricing block here under the model id used by
+#    that tier_map.
+# 3. The runner picks the price block matching the card's `model_used`
+#    field at completion time.
