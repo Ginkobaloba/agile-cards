@@ -19,6 +19,7 @@ import { cardsRouter } from "./routes/cards.js";
 import { retrosRouter } from "./routes/retros.js";
 import { sprintsRouter } from "./routes/sprints.js";
 import { sseRouter } from "./routes/sse.js";
+import { storiesRouter } from "./routes/stories.js";
 
 function main(): void {
   // Boot stateful things in order. SQLite first so any auth check before
@@ -73,6 +74,7 @@ function main(): void {
   app.use("/api", cardsRouter());
   app.use("/api", sprintsRouter());
   app.use("/api", retrosRouter());
+  app.use("/api", storiesRouter());
 
   // SSE has its own path so the frontend can target it directly. Auth
   // still required.

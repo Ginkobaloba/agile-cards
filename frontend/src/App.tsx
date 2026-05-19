@@ -10,6 +10,7 @@ import { api } from "./lib/api";
 import { Kanban } from "./routes/Kanban";
 import { Retros } from "./routes/Retros";
 import { SprintPlanner } from "./routes/SprintPlanner";
+import { SubmitStory } from "./routes/SubmitStory";
 
 /**
  * Root component. Gate on auth, then mount the dashboard. Health info
@@ -43,6 +44,7 @@ export function App() {
       <main className="flex-1">
         <Routes>
           <Route path="/" element={<Kanban loading={loading} error={error} />} />
+          <Route path="/submit" element={<SubmitStory />} />
           <Route path="/sprints" element={<SprintPlanner />} />
           <Route path="/retros" element={<Retros />} />
         </Routes>

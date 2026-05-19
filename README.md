@@ -107,6 +107,42 @@ Environment variables read by the backend at startup:
 | `DB_PATH`    | `./data/board.sqlite`                  | SQLite database file                             |
 | `CORS_ORIGIN`| `http://localhost:5173`                | Allowed origin for the Vite dev server           |
 | `LOG_LEVEL`  | `info`                                 | `error`, `warn`, `info`, `debug`                 |
+| `CLAUDE_CLI_PATH` | `claude`                          | Override the `claude` CLI binary path for the planner invoker |
+
+## Submitting a story
+
+The kanban is the read side of the system. The submit-story surface at
+`/submit` is the write side.
+
+1. Open `/submit` from the header. Paste a user story in the textarea.
+2. Pick a project from the dropdown, or leave it as "(no project)".
+3. Optionally open "Advanced options" to force deep (3-agent) planning
+   or override the project's mode.
+4. Click **Plan this story**. The backend invokes the `/cards` skill in
+   a staging directory under `<CARDS_DIR>/_staging/<batchId>/`. Progress
+   events stream back over SSE so you can watch the planner and reviewer
+   work in real time.
+5. When planning finishes, a dry-run review panel appears with the
+   proposed cards, tier histogram, depends-on edges, and total estimated
+   tokens. Nothing is in the backlog yet.
+6. Click **Approve and write to backlog** to promote the staged batch.
+   The cards land in `<CARDS_DIR>/backlog/`, the manifest moves to
+   `<CARDS_DIR>/_batches/<batchId>/manifest.json`, the chokidar watcher
+   fires `card-added` events, and the kanban updates live.
+7. Click **Cancel** to discard the staging dir and start over.
+
+The submit endpoint and its companions are bearer-token-gated, same as
+the rest of `/api/*`:
+
+- `POST /api/stories/submit` — streams `progress`, `dry_run`, and
+  `error` SSE events.
+- `POST /api/stories/:batchId/approve` — promotes to backlog.
+- `POST /api/stories/:batchId/cancel` — discards the staging dir.
+- `GET  /api/stories/pending` — lists in-memory pending batches.
+
+The planner runs as a subprocess (`claude -p` by default). The wire-up
+between the dashboard and the runner is documented in
+`docs/handoffs/HANDOFF_2026-05-18_submit-story.md`.
 
 ## Auth
 

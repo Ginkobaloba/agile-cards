@@ -11,6 +11,7 @@
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test src/routes/stories.test.ts",
     "create-token": "tsx scripts/create-token.ts",
     "list-tokens": "tsx scripts/list-tokens.ts",
     "revoke-token": "tsx scripts/revoke-token.ts"
@@ -28,7 +29,8 @@
     "@types/express": "^4.17.21",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^20.16.10",
-    "tsx": "^4.19.1",
+    "esbuild": "^0.28.0",
+    "tsx": "^4.22.3",
     "typescript": "^5.6.3"
   },
   "engines": {
