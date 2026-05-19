@@ -36,5 +36,24 @@ services:
     ports:
       - "8080:80"
 
+  # Cloudflare Tunnel connector. Exposes the frontend container to the
+  # public internet at app.projectnexuscode.org via Cloudflare's edge.
+  # Cloudflare Access (configured in the dashboard, account-side) sits
+  # in front of the tunnel and enforces identity. The dashboard's own
+  # bearer-token middleware stays as defense in depth.
+  #
+  # Bring up only on the machine that should host the public dashboard
+  # (currently the 4070). The TUNNEL_TOKEN env var is required, see
+  # .env.example.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: agile-cards-board-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: "${TUNNEL_TOKEN:?TUNNEL_TOKEN is required, see .env.example}"
+    depends_on:
+      - frontend
+
 volumes:
   board-data:
