@@ -64,9 +64,19 @@ from ..store import (
     build_repository,
 )
 from ..store.projection import ProjectionError, parse_card_text, project_card_file
+from ..verifier import VerifierError, VerifierResult, verify_card
+from ..verifier.runner import VERDICT_FAIL, VERDICT_PASS, VERDICT_STANDUP
 from .orphan import reclaim, scan_for_orphans
 from .spawner import spawn_worker
 from .worktree import WorktreeCreateError, prepare_worktree
+
+
+# How many times the daemon re-runs the verifier on a `VerifierError`
+# before giving up and routing to `blocked`. Per
+# RUNNER_CONTRACT.md "Result shape" / error branch: "retries the
+# verifier up to two times. After two failed retries, the card moves
+# to `blocked/`".
+_VERIFIER_MAX_RETRIES: int = 2
 
 
 log = logging.getLogger(__name__)
@@ -489,10 +499,12 @@ class Daemon:
         store, plus one `executed` event, then routes on the exit
         code:
 
-        - **0 (clean):** the card is left `active`. A clean executor
-          finish is not itself a transition to `done`; the verifier
-          owns that arrow (chunk 3), and picks the card up from
-          `active`.
+        - **0 (clean):** the verifier runs. PASS -> `done`. FAIL ->
+          back to `backlog` with `verifier_notes` written into the
+          body. NEEDS_STANDUP_REVIEW -> `awaiting_standup_review`.
+          Verifier internal error (after 2 retries) -> `blocked`.
+          When `verifier_enabled=False` the card is left `active`,
+          matching chunk 2 behavior.
         - **11 / 12 (cost-cap halt / cascade-exhausted halt):** the
           card is transitioned to `blocked` -- RUNNER_CONTRACT.md's
           "Cost cap enforcement" and "Cascade-on-confidence routing"
@@ -581,6 +593,9 @@ class Daemon:
                 "active for orphan reclaim",
                 claim.card_id, rc,
             )
+        else:
+            # Clean executor exit: dispatch the verifier.
+            self._dispatch_verifier(claim, body_md=body_md, fields=fields, sidecar=sidecar)
 
     @staticmethod
     def _read_result_sidecar(run_dir: Path) -> dict[str, Any]:
@@ -664,6 +679,373 @@ class Daemon:
                 "failed to route halted card %s to blocked: %s",
                 claim.card_id, exc,
             )
+
+    # ---- verifier dispatch (chunk 3) ---------------------------------
+
+    def _dispatch_verifier(
+        self,
+        claim: ClaimedCard,
+        *,
+        body_md: str | None,
+        fields: dict[str, Any],
+        sidecar: dict[str, Any],
+    ) -> None:
+        """Run the cold-read verifier on a clean executor exit.
+
+        Routes the card per the verifier's verdict (see
+        `_post_worker_exit` docstring). When `verifier_enabled` is
+        False the card is left `active`, exactly as chunk 2 left it.
+        The verifier's own internal crash (`VerifierError`) is retried
+        up to `_VERIFIER_MAX_RETRIES` times before the card routes to
+        `blocked`.
+        """
+        if not self.cfg.verifier_enabled:
+            log.info("verifier disabled; leaving %s active", claim.card_id)
+            return
+
+        record = self.repo.get_card(claim.card_id, tenant_id=self.tenant_id)
+        if record is None:  # pragma: no cover - we just wrote it.
+            log.error("card %s vanished before verifier dispatch", claim.card_id)
+            return
+        card_body = body_md if body_md is not None else record.body_md
+
+        eligible_to_skip = self._verifier_skip_eligible(
+            record, fields, sidecar
+        )
+        if eligible_to_skip:
+            log.info(
+                "verifier skip eligible for %s (high-confidence "
+                "cascade-clean run); auto-passing to done",
+                claim.card_id,
+            )
+            self._verifier_apply_pass(
+                claim,
+                result=None,
+                skip_reason="high-confidence cascade-clean run",
+            )
+            return
+
+        # Retry loop. Per the contract the orchestrator retries the
+        # verifier; the verifier itself does not.
+        result: VerifierResult | None = None
+        last_error: VerifierError | None = None
+        for attempt in range(_VERIFIER_MAX_RETRIES + 1):
+            try:
+                result = verify_card(
+                    card_id=claim.card_id,
+                    card_body=card_body,
+                    worktree=claim.worktree_path,
+                    env={},  # the daemon owns scrubbing; the verifier
+                             # inherits an empty block, the contract's
+                             # most defensive default.
+                    subjective_client=self._build_subjective_client(),
+                    subjective_starting_tier=self.cfg.subjective_starting_tier,
+                    subjective_max_tier=self.cfg.subjective_max_tier,
+                    subjective_confidence_threshold=
+                        self.cfg.subjective_confidence_threshold,
+                    subjective_disabled=self.cfg.verifier_cascade_disabled,
+                )
+                break
+            except VerifierError as exc:
+                last_error = exc
+                log.warning(
+                    "verifier crash on %s attempt %d/%d: %s",
+                    claim.card_id, attempt + 1,
+                    _VERIFIER_MAX_RETRIES + 1, exc,
+                )
+            except Exception as exc:  # noqa: BLE001
+                last_error = VerifierError(str(exc))
+                log.exception(
+                    "unexpected verifier exception on %s attempt %d/%d",
+                    claim.card_id, attempt + 1, _VERIFIER_MAX_RETRIES + 1,
+                )
+
+        if result is None:
+            self._verifier_route_error(claim, last_error)
+            return
+
+        if result.overall_status == VERDICT_PASS:
+            self._verifier_apply_pass(claim, result=result, skip_reason=None)
+        elif result.overall_status == VERDICT_FAIL:
+            self._verifier_apply_fail(claim, result)
+        elif result.overall_status == VERDICT_STANDUP:
+            self._verifier_apply_standup(claim, result)
+        else:  # pragma: no cover - defensive.
+            log.error(
+                "verifier returned unknown verdict %r for %s; routing to blocked",
+                result.overall_status, claim.card_id,
+            )
+            self._verifier_route_error(
+                claim,
+                VerifierError(f"unknown verdict {result.overall_status!r}"),
+            )
+
+    def _verifier_skip_eligible(
+        self,
+        record: CardRecord,
+        fields: dict[str, Any],
+        sidecar: dict[str, Any],
+    ) -> bool:
+        """RUNNER_CONTRACT.md "When the verifier MAY be skipped".
+
+        All four conditions must hold. The cascade-history check looks
+        at the merged history (record + fields-just-applied); a
+        non-empty history disqualifies skip.
+        """
+        cascade = fields.get("cascade_history")
+        if cascade is None:
+            cascade = record.field_value("cascade_history")
+        if isinstance(cascade, list) and len(cascade) > 0:
+            return False
+        # Skip requires high executor confidence; we read it from the
+        # sidecar's `executor_confidence` slot when the executor wrote
+        # one. Chunk 3's executor writes it via the sidecar's
+        # `confidence` key when it is present; the absence of a value
+        # is a vote AGAINST skipping (be conservative).
+        conf = sidecar.get("executor_confidence")
+        if conf is None:
+            return False
+        try:
+            conf_f = float(conf)
+        except (TypeError, ValueError):
+            return False
+        if conf_f < self.cfg.verifier_skip_confidence_threshold:
+            return False
+        # The contract additionally requires no `type: subjective`
+        # items and no AC retries. The verifier sees that with a quick
+        # parse, so we delegate that check to a dry parse of the body.
+        try:
+            from ..verifier.parse import parse_acceptance_block
+
+            items = parse_acceptance_block(record.body_md)
+        except Exception:  # noqa: BLE001
+            return False
+        if any(it.subjective for it in items):
+            return False
+        return True
+
+    def _verifier_apply_pass(
+        self,
+        claim: ClaimedCard,
+        *,
+        result: VerifierResult | None,
+        skip_reason: str | None,
+    ) -> None:
+        now = now_utc_iso()
+        fields: dict[str, Any] = {
+            "verified_at": now,
+            "verified_by": (
+                "runner-verifier" if skip_reason is None else None
+            ),
+            "verifier_skipped_reason": skip_reason,
+        }
+        if result is not None and result.cascade_history_appendix:
+            fields["verifier_cascade_history"] = self._merge_appendix(
+                claim, result.cascade_history_appendix
+            )
+        payload = self._verifier_payload(result, skip_reason=skip_reason)
+        try:
+            self.repo.transition(
+                claim.card_id,
+                to_status=CardStatus.DONE.value,
+                tenant_id=self.tenant_id,
+                fields=fields,
+                actor_id=claim.attempt_trace_id,
+                actor_type=ActorType.VERIFIER.value,
+                event_type=EventType.VERIFIED.value,
+                payload=payload,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.error("verifier PASS transition failed for %s: %s", claim.card_id, exc)
+
+    def _verifier_apply_fail(
+        self, claim: ClaimedCard, result: VerifierResult
+    ) -> None:
+        """A failing verifier returns the card to backlog with notes.
+
+        Per RUNNER_CONTRACT.md "Result shape": "append a
+        `verifier_notes:` block to the card body ... move the card
+        back to `active/`, and clear `claimed_by`, `started_at`,
+        `last_heartbeat`. The next claim picks it up with the
+        verifier's notes in hand."
+
+        After the chunk 2b cutover `backlog` is the queryable bucket
+        the daemon claims from, so the card goes to `backlog` (status
+        column), not back into a folder. This matches the contract's
+        intent: the next claim picks it up.
+        """
+        body_md = self._append_verifier_notes_block(claim, result)
+        cascade_field = self._merge_appendix(claim, result.cascade_history_appendix)
+        fields: dict[str, Any] = {
+            "verifier_skipped_reason": None,
+            "verifier_cascade_history": cascade_field,
+            # Clear the claim provenance so the next claim is clean.
+            "claimed_by": None,
+            "started_at": None,
+            "last_heartbeat": None,
+            "attempt_trace_id": None,
+        }
+        if body_md is not None:
+            try:
+                self.repo.apply_executor_result(
+                    claim.card_id,
+                    tenant_id=self.tenant_id,
+                    body_md=body_md,
+                    fields=None,
+                    event=None,
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.error("could not write verifier_notes for %s: %s", claim.card_id, exc)
+        payload = self._verifier_payload(result, skip_reason=None)
+        try:
+            self.repo.transition(
+                claim.card_id,
+                to_status=CardStatus.BACKLOG.value,
+                tenant_id=self.tenant_id,
+                fields=fields,
+                actor_id=claim.attempt_trace_id,
+                actor_type=ActorType.VERIFIER.value,
+                event_type=EventType.VERIFIED.value,
+                payload=payload,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.error("verifier FAIL transition failed for %s: %s", claim.card_id, exc)
+
+    def _verifier_apply_standup(
+        self, claim: ClaimedCard, result: VerifierResult
+    ) -> None:
+        cascade_field = self._merge_appendix(claim, result.cascade_history_appendix)
+        standup_reason = "; ".join(result.standup_reasons) or (
+            "subjective AC items exhausted cascade without reaching threshold"
+        )
+        fields: dict[str, Any] = {
+            "verifier_cascade_history": cascade_field,
+            "standup_reason": standup_reason,
+        }
+        payload = self._verifier_payload(result, skip_reason=None)
+        try:
+            self.repo.transition(
+                claim.card_id,
+                to_status=CardStatus.AWAITING_STANDUP_REVIEW.value,
+                tenant_id=self.tenant_id,
+                fields=fields,
+                actor_id=claim.attempt_trace_id,
+                actor_type=ActorType.VERIFIER.value,
+                event_type=EventType.VERIFIED.value,
+                payload=payload,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.error(
+                "verifier STANDUP transition failed for %s: %s",
+                claim.card_id, exc,
+            )
+
+    def _verifier_route_error(
+        self, claim: ClaimedCard, error: VerifierError | None
+    ) -> None:
+        msg = str(error) if error is not None else "verifier failed silently"
+        log.error(
+            "verifier crashed twice on %s; routing to blocked: %s",
+            claim.card_id, msg,
+        )
+        try:
+            self.repo.transition(
+                claim.card_id,
+                to_status=CardStatus.BLOCKED.value,
+                tenant_id=self.tenant_id,
+                actor_id=claim.attempt_trace_id,
+                actor_type=ActorType.VERIFIER.value,
+                event_type=EventType.BLOCKED.value,
+                payload={
+                    "reason": "verifier crash exhausted retries",
+                    "verifier_error": msg,
+                    "max_retries": _VERIFIER_MAX_RETRIES,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.error(
+                "could not route %s to blocked after verifier crash: %s",
+                claim.card_id, exc,
+            )
+
+    def _build_subjective_client(self) -> Any | None:
+        """Return an Anthropic client for the subjective cascade, or None.
+
+        The daemon only constructs the client when ANTHROPIC_API_KEY is
+        in its own env block. A card with no subjective items never
+        uses the client, so returning None when the key is missing is
+        safe; what fails (correctly) is a card carrying subjective
+        items on a daemon configured without a key, which routes to
+        standup review per RUNNER_CONTRACT.md.
+        """
+        key = os.environ.get("ANTHROPIC_API_KEY")
+        if not key:
+            return None
+        try:
+            import anthropic
+        except ImportError:
+            log.warning(
+                "subjective verifier needs `anthropic` but it is not "
+                "installed; subjective items will route to standup review"
+            )
+            return None
+        try:
+            return anthropic.Anthropic(api_key=key)
+        except Exception:  # noqa: BLE001
+            log.exception("could not construct anthropic client for verifier")
+            return None
+
+    def _merge_appendix(
+        self, claim: ClaimedCard, appendix: tuple[dict[str, Any], ...]
+    ) -> list[dict[str, Any]]:
+        """Append-only merge into the card's `verifier_cascade_history`."""
+        record = self.repo.get_card(claim.card_id, tenant_id=self.tenant_id)
+        existing = (
+            record.field_value("verifier_cascade_history") if record else None
+        )
+        if not isinstance(existing, list):
+            existing = []
+        return list(existing) + [dict(e) for e in appendix]
+
+    def _append_verifier_notes_block(
+        self, claim: ClaimedCard, result: VerifierResult
+    ) -> str | None:
+        """Compose a `verifier_notes:` YAML block under the card body."""
+        record = self.repo.get_card(claim.card_id, tenant_id=self.tenant_id)
+        if record is None:
+            return None
+        notes_lines: list[str] = ["", "## Verifier notes", "", "```yaml", "verifier_notes:"]
+        for item in result.items:
+            verdict = "pass" if item.handler_result.passed else "fail"
+            descr = item.item.get("description") or f"AC#{item.item_idx}"
+            notes_lines.append(f"  - index: {item.item_idx}")
+            notes_lines.append(f"    description: {descr!r}")
+            notes_lines.append(f"    phase: {item.phase}")
+            notes_lines.append(f"    result: {verdict}")
+            evidence = item.handler_result.evidence or {}
+            notes_lines.append(f"    evidence: {json.dumps(evidence, sort_keys=True)}")
+        notes_lines.append("```")
+        notes_lines.append("")
+        notes_block = "\n".join(notes_lines)
+        body = (record.body_md or "").rstrip() + "\n" + notes_block + "\n"
+        return body
+
+    @staticmethod
+    def _verifier_payload(
+        result: VerifierResult | None, *, skip_reason: str | None
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        if skip_reason is not None:
+            payload["skipped"] = True
+            payload["skip_reason"] = skip_reason
+        if result is not None:
+            payload.update(
+                overall_status=result.overall_status,
+                items_total=len(result.items),
+                items_failed=len(result.failed_items),
+                standup_reason_items=list(result.standup_reason_items),
+            )
+        return payload
 
     def _drain_workers(self) -> None:
         if not self._workers:
