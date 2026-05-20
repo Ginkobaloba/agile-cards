@@ -1,19 +1,25 @@
 """Worker entry point used by the daemon's spawner.
 
-Lifecycle (chunk 1):
+The worker reads and writes the per-run projected card file the
+daemon wrote into the run dir (CARDS_RUNNER_CARD_PATH). That file is
+an ephemeral per-run view; on worker exit the daemon parses it back
+into the canonical card store. The worker never touches the store
+directly -- it works a Markdown file exactly as a v1 worker did.
+
+Lifecycle:
 
 1. Read CARDS_RUNNER_CARD_PATH and CARDS_RUNNER_WORKTREE from env.
-2. Parse the card frontmatter.
+2. Parse the projected card frontmatter.
 3. Start a heartbeat thread that:
    - touches `<worktree>/.cards-heartbeat` every
      `CARDS_RUNNER_HEARTBEAT_INTERVAL_SEC` seconds (default 30),
-   - updates the card frontmatter `last_heartbeat` field every Nth
-     heartbeat (default every heartbeat in chunk 1; we keep the
-     cadence high so tests see propagation quickly).
-4. Call the `Invoker` (chunk 1: `StubInvoker`).
+   - updates the projected card's `last_heartbeat` field on each
+     beat.
+4. Call the `Invoker` (the chunk 2b-i stub `StubInvoker`; chunk 2b-ii
+   swaps in the real SDK-backed executor).
 5. On clean return, append completion notes to the card body,
-   stamp `finished_at`, `actual_tokens`, `model_used`, write the
-   card back, exit 0.
+   stamp `finished_at`, `actual_tokens`, `actual_duration_minutes`,
+   `model_used`, write the projected card back, exit 0.
 6. On exception, write a short error block, exit with EXIT_STUB_ERROR.
 """
 from __future__ import annotations
@@ -179,8 +185,11 @@ def _stamp_success(
     snap.frontmatter["last_heartbeat"] = now_iso
     if model_used is not None:
         snap.frontmatter["model_used"] = model_used
-    _set_actual_tokens(snap, actual_tokens)
-    _set_actual_duration(snap, duration_sec)
+    # The projected card file is rewritten whole now, so the worker
+    # can set these fields directly -- no allowlist, no no-op for
+    # fields the planner did not pre-bake.
+    snap.frontmatter["actual_tokens"] = actual_tokens
+    snap.frontmatter["actual_duration_minutes"] = round(duration_sec / 60.0, 2)
     snap.frontmatter["attempt_trace_id"] = attempt_trace_id
     append_completion_notes(snap, result_notes)
     write_card_file(card_path, snap)
@@ -204,24 +213,6 @@ def _stamp_error(card_path: Path, attempt_trace_id: str) -> None:
         write_card_file(card_path, snap)
     except FileNotFoundError:
         return
-
-
-def _set_actual_tokens(snap: object, actual_tokens: int) -> None:
-    """Best-effort. The frontmatter writer in chunk 1 only handles
-    a fixed allowlist of scalar fields, so this is a no-op unless
-    the planner has the field pre-baked. We still record duration
-    via the same mechanism. Chunk 2 will extend the writer to
-    handle nested fields properly.
-    """
-    fm = getattr(snap, "frontmatter", None)
-    if isinstance(fm, dict):
-        fm.setdefault("actual_tokens", actual_tokens)
-
-
-def _set_actual_duration(snap: object, duration_sec: float) -> None:
-    fm = getattr(snap, "frontmatter", None)
-    if isinstance(fm, dict):
-        fm.setdefault("actual_duration_minutes", round(duration_sec / 60.0, 2))
 
 
 def main_from_env() -> int:

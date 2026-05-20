@@ -1,155 +1,145 @@
-"""Orphan reclaim.
+"""Orphan reclaim, store-backed.
 
 A card whose `last_heartbeat` is older than the project's
-`orphan_timeout_minutes` is treated as orphaned. The daemon moves it
-back to `backlog/`, clears the claim metadata, and leaves the
-worktree intact for forensics. The reaper (chunk 4) deletes
-worktrees older than the forensic TTL.
+`orphan_timeout_minutes` is treated as orphaned: its worker is
+presumed dead. The runner transitions it back to `backlog` in the
+card store, clears the claim metadata, and appends a `reclaimed`
+event. The worktree is left intact for forensics; the reaper
+(chunk 4) deletes worktrees older than the forensic TTL.
+
+This is the chunk 2b cutover of v1's filesystem orphan path. v1
+scanned the `active/` subfolder and `os.replace`'d files back to
+`backlog/`. The card store is now canonical, so the scan is a
+`query_cards(status="active")` and the reclaim is a `transition`.
+The heartbeat the scan reads is the store column the daemon mirrors
+each tick from the live worker; an orphan is simply a card the
+daemon stopped being able to refresh.
 
 Per RUNNER_CONTRACT.md "Heartbeat and orphan reclaim" the runner
-preserves `cascade_history` and `verifier_cascade_history` across
-reclaim. Chunk 1 clears only the four claim fields plus
-`attempt_trace_id`.
+preserves `cascade_history` and `verifier_cascade_history` across a
+reclaim. `transition` only touches `status` and the four claim
+fields, so every other field is carried forward untouched.
 """
 from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Iterable
 
-from ..common.atomic import atomic_move
-from ..common.card_io import parse_card_file, write_card_file
-from ..common.types import (
-    CardSnapshot,
-    DaemonConfig,
-    RuntimePaths,
-    SUBFOLDER_BACKLOG,
-    parse_iso,
+from ..common.types import DaemonConfig, parse_iso
+from ..store import (
+    DEFAULT_TENANT,
+    ActorType,
+    CardRecord,
+    CardRepository,
+    CardStatus,
+    EventType,
 )
 
 
 log = logging.getLogger(__name__)
 
 
+# The frontmatter mutation a reclaim applies: status returns to
+# backlog and the four claim fields are cleared so the next claim
+# starts from a clean slate.
+_RECLAIM_FIELDS: dict[str, None] = {
+    "claimed_by": None,
+    "started_at": None,
+    "last_heartbeat": None,
+    "attempt_trace_id": None,
+}
+
+
 def scan_for_orphans(
     *,
-    paths: RuntimePaths,
+    repo: CardRepository,
     cfg: DaemonConfig,
+    tenant_id: str = DEFAULT_TENANT,
     now: datetime | None = None,
-) -> list[Path]:
-    """Return paths of cards in active/ that look orphaned.
+) -> list[str]:
+    """Return the card ids of `active` cards that look orphaned.
 
     A card is orphaned when its `last_heartbeat` is older than
-    `cfg.orphan_timeout_sec`. Missing `last_heartbeat` is also
-    treated as orphaned (the worker never wrote its first
-    heartbeat), since we have no positive evidence of life.
+    `cfg.orphan_timeout_sec`. A missing `last_heartbeat` falls back to
+    `started_at`; a card with neither timestamp is treated as
+    malformed rather than orphaned and is skipped (it cannot happen
+    under the transactional claim, which stamps both atomically, but
+    the guard is cheap).
     """
     if now is None:
         now = datetime.now(tz=timezone.utc)
     cutoff_sec = cfg.orphan_timeout_sec
-    out: list[Path] = []
-    if not paths.active.is_dir():
-        return out
-    for entry in paths.active.iterdir():
-        if not entry.is_file() or entry.suffix != ".md":
-            continue
-        if _is_orphan(entry, now=now, cutoff_sec=cutoff_sec):
-            out.append(entry)
+    out: list[str] = []
+    for record in repo.query_cards(
+        tenant_id=tenant_id, status=CardStatus.ACTIVE.value
+    ):
+        if _is_orphan(record, now=now, cutoff_sec=cutoff_sec):
+            out.append(record.card_id)
     return out
 
 
-def _is_orphan(card_path: Path, *, now: datetime, cutoff_sec: int) -> bool:
-    try:
-        snap = parse_card_file(card_path)
-    except Exception as exc:
-        log.warning("could not parse %s during orphan scan: %s", card_path, exc)
+def _is_orphan(record: CardRecord, *, now: datetime, cutoff_sec: int) -> bool:
+    ref_text = record.last_heartbeat or record.started_at
+    if ref_text is None:
         return False
-    last_hb = snap.get("last_heartbeat")
-    if last_hb is None:
-        # Card claimed but never heartbeated. Compare against
-        # `started_at` instead; if that is older than cutoff, it is
-        # orphaned. This handles the daemon-crash-between-move-and-stamp
-        # case too because the boot path re-stamps started_at.
-        started = snap.get("started_at")
-        ref = parse_iso(started) if started else None
-    else:
-        ref = parse_iso(str(last_hb))
+    try:
+        ref = parse_iso(ref_text)
+    except ValueError:
+        log.warning(
+            "card %s has unparseable heartbeat/started_at %r; skipping",
+            record.card_id, ref_text,
+        )
+        return False
     if ref is None:
-        # No timestamps at all; treat as malformed-claim, not orphan.
         return False
     age_sec = (now - ref).total_seconds()
     return age_sec > cutoff_sec
 
 
-def reclaim(card_path: Path, *, paths: RuntimePaths) -> Path:
-    """Move a card from active/ back to backlog/. Returns the new path.
+def reclaim(
+    repo: CardRepository,
+    card_id: str,
+    *,
+    tenant_id: str = DEFAULT_TENANT,
+) -> CardRecord:
+    """Transition a card from `active` back to `backlog` in the store.
 
-    Clears `claimed_by`, `started_at`, `last_heartbeat`, and
-    `attempt_trace_id`. Preserves `cascade_history` and every other
-    field the planner or prior runs wrote.
-
-    Idempotent: if the card has already been reclaimed (file is now
-    in backlog/) we return the existing path without raising.
+    Clears the four claim fields and appends a `reclaimed` event.
+    Every planner- or run-owned field (including `cascade_history`)
+    is preserved. Returns the updated `CardRecord`.
     """
-    backlog_path = paths.backlog / card_path.name
-    if not card_path.exists():
-        if backlog_path.exists():
-            return backlog_path
-        raise FileNotFoundError(card_path)
-
-    snap = parse_card_file(card_path)
-    _clear_claim_fields(snap)
-    write_card_file(card_path, snap)
-    atomic_move(card_path, backlog_path)
-    log.info(
-        "reclaimed orphan card_id=%s from active/ -> backlog/",
-        snap.card_id,
+    updated = repo.transition(
+        card_id,
+        to_status=CardStatus.BACKLOG.value,
+        tenant_id=tenant_id,
+        fields=dict(_RECLAIM_FIELDS),
+        actor_type=ActorType.RUNNER.value,
+        event_type=EventType.RECLAIMED.value,
     )
-    return backlog_path
+    log.info("reclaimed card_id=%s active -> backlog", card_id)
+    return updated
 
 
-def force_reclaim(card_id: str, *, paths: RuntimePaths) -> Path:
-    """Reclaim a card by id, regardless of heartbeat.
+def force_reclaim(
+    repo: CardRepository,
+    card_id: str,
+    *,
+    tenant_id: str = DEFAULT_TENANT,
+) -> CardRecord:
+    """Reclaim a card by id regardless of heartbeat.
 
-    Looks for the card in `active/`. Raises FileNotFoundError if it
-    is not there. CLI surface (`cards-runner reclaim`) hits this.
+    The CLI surface (`cards-runner reclaim`) hits this. Raises
+    `FileNotFoundError` if the id does not exist; raises `RuntimeError`
+    if the card is not currently `active` (there is nothing to
+    reclaim). The exception split matches the CLI's existing exit
+    codes (3 for not-found, 1 for the runtime error).
     """
-    candidates = [
-        p for p in _iter_active_cards(paths)
-        if _matches_card_id(p, card_id)
-    ]
-    if not candidates:
-        raise FileNotFoundError(f"no card with id {card_id} in active/")
-    if len(candidates) > 1:
+    record = repo.get_card(card_id, tenant_id=tenant_id)
+    if record is None:
+        raise FileNotFoundError(f"no card with id {card_id}")
+    if record.status != CardStatus.ACTIVE.value:
         raise RuntimeError(
-            f"multiple cards in active/ match id {card_id}: {candidates}"
+            f"card {card_id} is {record.status!r}, not active; "
+            "nothing to reclaim"
         )
-    return reclaim(candidates[0], paths=paths)
-
-
-def _iter_active_cards(paths: RuntimePaths) -> Iterable[Path]:
-    if not paths.active.is_dir():
-        return iter(())
-    return (
-        p for p in paths.active.iterdir()
-        if p.is_file() and p.suffix == ".md"
-    )
-
-
-def _matches_card_id(path: Path, card_id: str) -> bool:
-    if path.stem == card_id:
-        return True
-    try:
-        snap = parse_card_file(path)
-    except Exception:
-        return False
-    return snap.card_id == card_id
-
-
-def _clear_claim_fields(snap: CardSnapshot) -> None:
-    snap.frontmatter["status"] = SUBFOLDER_BACKLOG
-    snap.frontmatter["claimed_by"] = None
-    snap.frontmatter["started_at"] = None
-    snap.frontmatter["last_heartbeat"] = None
-    snap.frontmatter["attempt_trace_id"] = None
+    return reclaim(repo, card_id, tenant_id=tenant_id)

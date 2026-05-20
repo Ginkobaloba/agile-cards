@@ -1,42 +1,51 @@
 # cards-runner
 
-The harness that polls `C:\dev\todo\backlog\`, claims cards atomically into
-`active/`, spawns per-card workers under a Windows Job Object, and drives
-cards to terminal state.
+The harness that drives agile-cards work cards to terminal state: it
+claims cards from a canonical card store, spawns per-card workers
+under a Windows Job Object, mirrors heartbeats, reclaims orphans, and
+lands worker results back into the store.
 
-This is **chunk 1 of 4** per `docs/design/runner_v1_design.md`. Chunk 1 ships:
+This is a **4-chunk build** per the runner design and
+`docs/design/storage_substrate_v2.md`.
 
-- The thin long-running daemon (polling, claim arbitration, parallelism caps).
-- Worktree creation under a global mutex with the six isolation requirements.
-- A **stub executor** that simulates worker lifecycle without making any LLM
-  calls. Total token cost of chunk 1 is zero.
-- Orphan reclaim driven by `last_heartbeat`.
-- The atomic-rename-test sentinel gate (parallel mode disabled until the
-  test passes on the host machine).
-- CLI: `start`, `stop`, `status`, `reclaim`.
+- **Chunk 1** shipped the thin daemon, the filesystem claim path, the
+  stub executor, orphan reclaim, and the worktree isolation plumbing.
+- **Chunk 2a** shipped the storage layer: a `CardRepository`
+  interface with SQLite and Dolt stores, a `card_events` audit table,
+  and a v1 filesystem-to-database migration tool.
+- **Chunk 2b-i** (this state) is the **canonical cutover**. The
+  database is now the source of truth. The claim is a transactional
+  store `UPDATE`, not an atomic file move; folder-as-state is a
+  `status` column; the atomic-rename sentinel and the in-place YAML
+  rewriter are deleted. The stub executor is retained.
+- **Chunk 2b-ii** swaps the stub for the real SDK-in-process
+  executor (cost-cap hooks, the `_winapi.CreateProcess` Job Object
+  refinement, the executor cascade). See the chunk 2b handoff.
+- **Chunks 3-4** wire the verifier, merge orchestration, and the
+  reaper.
 
-Chunk 2 swaps the stub Invoker for the real Anthropic SDK in-process per
-worker, wires SDK hooks for cost-cap enforcement, and lights up the
-two-layer cost cap. The seams are already in place.
+## How card state works after the cutover
 
-## Architectural decisions baked in
+A card's authoritative state is a row in the card store (SQLite by
+default, Dolt optional -- one `CardRepository` interface, two
+implementations). The daemon:
 
-These come from the multi-agent paradigm-shift review on the three
-load-bearing forks (process model, executor invocation, cost cap):
+1. Queries the store for `backlog` cards and claims one with a
+   transactional conditional `UPDATE` -- correct under concurrency on
+   one host, and across hosts against one shared store.
+2. **Projects** the claimed card into a per-run `card.md` file under
+   `_runs/<attempt>/`. The worker reads and writes that file exactly
+   as a v1 worker read a card in `active/`; it never learns the
+   database exists.
+3. Spawns the worker under a Job Object with a scrubbed env block.
+4. Mirrors the live worker's liveness into the store's
+   `last_heartbeat` each poll tick; orphan reclaim reads that column.
+5. On worker exit, parses the projected file back and lands the
+   executor-owned deltas (body, `finished_at`, `actual_tokens`, ...)
+   into the store with an `executed` event.
 
-1. **Process model.** Thin long-running daemon plus per-card worker
-   subprocesses. State on disk. The daemon is stateless across restarts.
-2. **Executor invocation.** Per-card worker imports the Anthropic SDK
-   in-process (NOT a `claude` CLI shell-out). The `Invoker` seam keeps the
-   abstraction so a future ensemble-executor can plug in. Chunk 1 uses a
-   stub `Invoker` that does no LLM work. Each worker is wrapped in a
-   Windows **Job Object** with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` so the
-   daemon can hard-kill the entire process tree if needed.
-3. **Cost cap enforcement.** Chunk 2 uses Anthropic SDK **hooks**
-   (pre-tool-use, pre-message) for sub-second budget enforcement. Job
-   Object resource limits act as the OS-level backstop. Wall-clock
-   `TerminateProcess` is the last-resort safety net. The sentinel-file
-   halt remains as a FALLBACK path only.
+The runner holds no durable card state -- the store is the single
+source of truth, and a crashed daemon reconstructs everything from it.
 
 ## Quickstart
 
@@ -44,14 +53,20 @@ load-bearing forks (process model, executor invocation, cost cap):
 cd C:\dev\agile-cards\runner
 pip install -e .[dev]
 
-# Boot the daemon in the foreground against the default TODO root.
+# Boot the daemon. The store defaults to sqlite:<todo-root>\cards.db.
 cards-runner start --todo-root C:\dev\todo
 
 # In another shell:
 cards-runner status
 cards-runner reclaim b001-03-add-rate-limit-middleware
 cards-runner stop
+
+# Migrate an existing v1 filesystem card tree into a store first:
+cards-runner-migrate --todo-root C:\dev\todo --store sqlite:C:\dev\todo\cards.db
 ```
+
+The `--store` flag (or `CARDS_STORE` env var) overrides the default,
+e.g. `--store dolt:C:\dev\todo-store`.
 
 ## Layout
 
@@ -59,9 +74,29 @@ cards-runner stop
 runner/
   pyproject.toml
   src/cards_runner/
-    cli/              command surface
+    cli/              command surface (start, stop, status, reclaim)
     common/           card I/O, atomic ops, env scrub, locks, Job Object
-    daemon/           polling, claim, worktree creation, orphan reclaim
-    worker_stub/      stub executor + Invoker seam
-  tests/              pytest suite (concurrent claim, orphan, env scrub, ...)
+    daemon/           polling loop, store-backed claim, worktree, orphan
+    store/            CardRepository interface + SQLite/Dolt stores
+    worker_stub/      stub executor + the Invoker seam
+  tests/              pytest suite
 ```
+
+## Architectural decisions baked in
+
+From the multi-agent paradigm-shift reviews and the storage design:
+
+1. **Process model.** Thin long-running daemon plus per-card worker
+   subprocesses. State in the store; the daemon is stateless across
+   restarts.
+2. **Database-canonical (Model B).** The store is the source of
+   truth; the card file is a per-run projection. The executor keeps
+   its ORM-free Markdown interface. SQLite is the zero-ops default,
+   Dolt the opt-in for the multi-runner case.
+3. **Executor invocation.** The per-card worker imports the Anthropic
+   SDK in-process (chunk 2b-ii). The `Invoker` seam keeps the daemon
+   ignorant of stub-vs-real. Each worker is wrapped in a Job Object
+   so the daemon can hard-kill the whole process tree.
+4. **Cost-cap enforcement.** SDK hooks for sub-second budget
+   enforcement, Job Object resource limits as the OS backstop,
+   wall-clock `TerminateProcess` as the last resort (chunk 2b-ii).

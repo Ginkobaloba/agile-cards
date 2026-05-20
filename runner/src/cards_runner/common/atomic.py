@@ -1,14 +1,14 @@
 """Atomic filesystem primitives.
 
-Cards move between subfolders by a single OS-level rename. On Windows
-NTFS this is `MoveFileEx(MOVEFILE_REPLACE_EXISTING)`. Python's
-`os.replace` calls into the right syscall on every supported platform,
-so we route through it.
+`atomic_write_text` (and `atomic_touch`, which builds on it) writes
+through a same-directory tempfile plus `os.replace`, so a reader
+never sees a half-written file. The worker uses these for its
+heartbeat file and its projected card file.
 
-Atomic-rename-test sentinel: per design item 12, the daemon checks for
-a sentinel file confirming the host's atomic-rename behavior is sane
-before enabling parallel mode. The sentinel check lives in
-`daemon.atomic_rename_sentinel` so this module stays a pure helper.
+`atomic_move` is the same-volume rename primitive. After the chunk 2b
+cutover the card claim is a transactional store `UPDATE`, not a file
+move, so the runner no longer arbitrates claims with this; it remains
+a general helper (Python's `os.replace` is `MoveFileEx` on NTFS).
 """
 from __future__ import annotations
 

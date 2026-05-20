@@ -23,6 +23,15 @@ __pycache__/
 *.pyc
 .venv/
 node_modules/
+.pytest_cache/
+
+# Card store files. The runner's SQLite store (and Dolt's storage
+# dir) live outside the repo by design; never commit one if it lands
+# inside the tree during local runs.
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
 
 # Runtime data lives outside this repo by design.
 # If you ever symlink the runtime dir in here for convenience, ignore it.

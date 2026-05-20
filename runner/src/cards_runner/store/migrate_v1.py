@@ -269,17 +269,12 @@ def _migrate_batches(
 
 def _build_repo(store_spec: str) -> CardRepository:
     """Build a repository from a `sqlite:PATH` or `dolt:DIR` spec."""
-    if store_spec.startswith("sqlite:"):
-        from .sqlite_store import SqliteRepository
+    from . import build_repository
 
-        return SqliteRepository(store_spec[len("sqlite:"):])
-    if store_spec.startswith("dolt:"):
-        from .dolt_store import DoltRepository
-
-        return DoltRepository.embedded(store_spec[len("dolt:"):])
-    raise SystemExit(
-        f"unknown store spec {store_spec!r}; use sqlite:PATH or dolt:DIR"
-    )
+    try:
+        return build_repository(store_spec)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 def main(argv: list[str] | None = None) -> int:

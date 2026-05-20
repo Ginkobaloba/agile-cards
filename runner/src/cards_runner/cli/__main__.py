@@ -1,15 +1,15 @@
 """`cards-runner` CLI.
 
-Chunk 1 surfaces the minimal subset documented in the design doc
-item 11 plus what the chunk 1 ask spells out:
+Surfaces the minimal subset the chunk asks for:
 
 - `start`   boot the daemon (foreground)
 - `stop`    signal the daemon to drain and exit
-- `status`  print daemon state (PID, active count, last tick)
-- `reclaim` force-reclaim a specific card in active/
+- `status`  print daemon state plus per-status card counts
+- `reclaim` force-reclaim a specific `active` card back to `backlog`
 
-Chunks 2-4 will add `verify`, `approve`, `pause`, `resume`, `doctor`,
-and `pricing reload`.
+Chunks 3-4 will add `verify`, `approve`, `pause`, `resume`, `doctor`,
+and `pricing reload`. After the chunk 2b cutover `status` and
+`reclaim` read the card store, not a filesystem tree.
 """
 from __future__ import annotations
 
@@ -26,12 +26,24 @@ from ..common.locks import FileLock, pid_alive
 from ..common.types import DaemonConfig, RuntimePaths
 from ..daemon.daemon import Daemon, DaemonAlreadyRunning
 from ..daemon.orphan import force_reclaim
+from ..store import CardStatus, build_repository, default_store_spec
+from ..store.repository import CardRepository
+
+# The card statuses `status` reports, in display order.
+_STATUS_ORDER: tuple[str, ...] = (
+    CardStatus.BACKLOG.value,
+    CardStatus.ACTIVE.value,
+    CardStatus.AMENDMENTS.value,
+    CardStatus.AWAITING_STANDUP_REVIEW.value,
+    CardStatus.DONE.value,
+    CardStatus.BLOCKED.value,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="cards-runner",
-        description="agile-cards runner CLI (chunk 1)",
+        description="agile-cards runner CLI (chunk 2b)",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -57,7 +69,7 @@ def main(argv: list[str] | None = None) -> int:
     p_status.add_argument("--json", action="store_true")
 
     p_reclaim = sub.add_parser(
-        "reclaim", help="force-reclaim a card from active/ to backlog/"
+        "reclaim", help="force-reclaim a card from active to backlog"
     )
     _add_common(p_reclaim)
     p_reclaim.add_argument("card_id")
@@ -86,11 +98,29 @@ def _add_common(p: argparse.ArgumentParser) -> None:
         type=Path,
         default=Path(os.environ.get("CARDS_TODO_ROOT", r"C:\dev\todo")),
     )
+    p.add_argument(
+        "--store",
+        default=os.environ.get("CARDS_STORE", ""),
+        help="card store spec (sqlite:PATH or dolt:DIR); "
+        "default is sqlite:<todo-root>/cards.db",
+    )
+
+
+def _resolve_store(args: argparse.Namespace) -> str:
+    return args.store or default_store_spec(args.todo_root)
+
+
+def _open_store(args: argparse.Namespace) -> CardRepository:
+    """Open and schema-initialize the card store for a CLI command."""
+    repo = build_repository(_resolve_store(args))
+    repo.initialize_schema()
+    return repo
 
 
 def _cmd_start(args: argparse.Namespace) -> int:
     cfg = DaemonConfig(
         todo_root=args.todo_root,
+        store_spec=args.store,
         poll_interval_sec=args.poll_interval_sec,
         max_parallel=args.max_parallel,
         orphan_timeout_minutes=args.orphan_timeout_minutes,
@@ -144,68 +174,60 @@ def _cmd_status(args: argparse.Namespace) -> int:
     lock = FileLock(paths.daemon_lock)
     pid = lock.read_pid()
     running = pid is not None and pid_alive(pid)
-    active_count = _count_files(paths.active)
-    backlog_count = _count_files(paths.backlog)
-    done_count = _count_files(paths.done)
-    blocked_count = _count_files(paths.blocked)
-    sentinel_present = paths.atomic_rename_sentinel.is_file()
+    store_spec = _resolve_store(args)
+    repo = _open_store(args)
+    try:
+        counts = {
+            status: len(repo.query_cards(status=status))
+            for status in _STATUS_ORDER
+        }
+        total = repo.count_cards()
+    finally:
+        repo.close()
     payload: dict[str, Any] = {
         "todo_root": str(paths.todo_root),
+        "store": store_spec,
         "daemon_pid": pid,
         "daemon_running": running,
-        "atomic_rename_sentinel": sentinel_present,
-        "counts": {
-            "backlog": backlog_count,
-            "active": active_count,
-            "done": done_count,
-            "blocked": blocked_count,
-        },
+        "card_total": total,
+        "counts": counts,
     }
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
     print(f"todo_root: {payload['todo_root']}")
+    print(f"store: {store_spec}")
     print(
         f"daemon: {'running' if running else 'stopped'} "
         f"(pid={pid if pid else 'none'})"
     )
+    print(f"cards: {total} total")
     print(
-        f"atomic-rename sentinel: "
-        f"{'present' if sentinel_present else 'missing (parallel forced to 1)'}"
-    )
-    print(
-        "counts: backlog={backlog} active={active} done={done} blocked={blocked}"
-        .format(**payload["counts"])
+        "counts: "
+        + " ".join(f"{status}={counts[status]}" for status in _STATUS_ORDER)
     )
     return 0
 
 
 def _cmd_reclaim(args: argparse.Namespace) -> int:
-    paths = RuntimePaths.from_root(args.todo_root)
     if not args.force:
-        ans = input(f"reclaim {args.card_id} from active/ -> backlog/? [y/N] ")
+        ans = input(f"reclaim {args.card_id} from active -> backlog? [y/N] ")
         if ans.strip().lower() not in ("y", "yes"):
             print("aborted")
             return 0
+    repo = _open_store(args)
     try:
-        new_path = force_reclaim(args.card_id, paths=paths)
+        record = force_reclaim(repo, args.card_id)
     except FileNotFoundError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 3
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    print(f"reclaimed: {new_path}")
+    finally:
+        repo.close()
+    print(f"reclaimed: {record.card_id} (status={record.status})")
     return 0
-
-
-def _count_files(directory: Path) -> int:
-    if not directory.is_dir():
-        return 0
-    return sum(
-        1 for p in directory.iterdir()
-        if p.is_file() and p.suffix == ".md"
-    )
 
 
 if __name__ == "__main__":
