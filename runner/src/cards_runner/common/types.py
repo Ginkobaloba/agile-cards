@@ -149,10 +149,21 @@ class DaemonConfig:
     force_kill_after_seconds: int = 90
     skip_worktree: bool = False  # tests bypass git when not on a real repo.
     # Which executor the spawned worker runs: "stub" (chunk 1 default,
-    # zero tokens) or "sdk" (chunk 2b-ii real SdkInvoker). SDK mode
-    # makes the daemon inject ANTHROPIC_API_KEY into the worker's
-    # scrubbed env block.
+    # zero tokens), "sdk" (chunk 2b-ii reasoning-only SdkInvoker), or
+    # "sdk-tools" (chunk 3 tool-using SdkInvoker -- file/shell/git tool
+    # belt). Any SDK mode makes the daemon inject ANTHROPIC_API_KEY
+    # into the worker's scrubbed env block.
     invoker: str = "stub"
+    # Verifier configuration. Per RUNNER_CONTRACT.md "Cold-read
+    # verification". `verifier_enabled=False` falls back to chunk 2's
+    # behavior (clean rc=0 leaves the card active for the next claim);
+    # tests use it to keep the executor / verifier suites separate.
+    verifier_enabled: bool = True
+    verifier_cascade_disabled: bool = False
+    verifier_skip_confidence_threshold: float = 0.9
+    subjective_confidence_threshold: float = 0.85
+    subjective_starting_tier: str = "haiku"
+    subjective_max_tier: str = "opus"
     log_dir: Path | None = None
 
     @property

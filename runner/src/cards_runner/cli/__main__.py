@@ -56,16 +56,23 @@ def main(argv: list[str] | None = None) -> int:
     p_start.add_argument("--stub-sleep-sec", type=float, default=3.0)
     p_start.add_argument(
         "--invoker",
-        choices=("stub", "sdk"),
+        choices=("stub", "sdk", "sdk-tools"),
         default=os.environ.get("CARDS_RUNNER_INVOKER", "stub"),
-        help="executor to run per card: 'stub' (default, zero tokens) "
-        "or 'sdk' (the real Anthropic-SDK executor; needs "
+        help="executor to run per card: 'stub' (default, zero tokens), "
+        "'sdk' (reasoning-only Anthropic-SDK executor), or 'sdk-tools' "
+        "(chunk 3 tool-using executor with file/shell/git tools; needs "
         "ANTHROPIC_API_KEY in the daemon environment)",
     )
     p_start.add_argument(
         "--skip-worktree",
         action="store_true",
         help="skip git worktree creation (for tests against non-git roots)",
+    )
+    p_start.add_argument(
+        "--no-verifier",
+        action="store_true",
+        help="disable the cold-read verifier; a clean executor exit "
+        "leaves the card active (chunk 2 baseline behavior)",
     )
 
     p_stop = sub.add_parser("stop", help="signal the daemon to drain and exit")
@@ -136,14 +143,25 @@ def _cmd_start(args: argparse.Namespace) -> int:
         stub_sleep_sec=args.stub_sleep_sec,
         invoker=args.invoker,
         skip_worktree=args.skip_worktree,
+        verifier_enabled=not getattr(args, "no_verifier", False),
     )
-    if args.invoker == "sdk" and not os.environ.get("ANTHROPIC_API_KEY"):
+    if args.invoker in ("sdk", "sdk-tools") and not os.environ.get("ANTHROPIC_API_KEY"):
         print(
-            "error: --invoker sdk needs ANTHROPIC_API_KEY in the "
-            "environment",
+            "error: --invoker sdk/sdk-tools needs ANTHROPIC_API_KEY in "
+            "the environment",
             file=sys.stderr,
         )
         return 2
+    # The `sdk-tools` choice is exposed as a separate CLI value for
+    # discoverability; the daemon's invoker field still uses `sdk` and
+    # the worker is flipped into tools mode by the CARDS_RUNNER_USE_TOOLS
+    # env var the spawner now passes through.
+    if args.invoker == "sdk-tools":
+        os.environ["CARDS_RUNNER_USE_TOOLS"] = "1"
+        # The DaemonConfig's invoker keeps the canonical "sdk" name so
+        # spawner.py's existing "if cfg.invoker == 'sdk'" branch keeps
+        # working; the env var flips the executor into tool-using mode.
+        cfg = DaemonConfig(**{**cfg.__dict__, "invoker": "sdk"})
     try:
         return Daemon(cfg).run()
     except DaemonAlreadyRunning as exc:

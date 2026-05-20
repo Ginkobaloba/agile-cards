@@ -154,6 +154,13 @@ def repo(store_path: Path) -> Iterator[SqliteRepository]:
 
 @pytest.fixture
 def daemon_cfg(todo_root: Path, store_spec: str) -> DaemonConfig:
+    """Daemon config for chunks 1-2 tests.
+
+    Verifier is disabled by default here so the chunk 2b-ii exit-
+    routing tests keep their semantics (a clean rc=0 leaves the card
+    active). Chunk 3 verifier tests use their own fixture that flips
+    `verifier_enabled=True`.
+    """
     return DaemonConfig(
         todo_root=todo_root,
         store_spec=store_spec,
@@ -165,6 +172,32 @@ def daemon_cfg(todo_root: Path, store_spec: str) -> DaemonConfig:
         stub_sleep_sec=0.5,
         worktree_forensic_ttl_hours=24,
         skip_worktree=True,
+        verifier_enabled=False,
+    )
+
+
+@pytest.fixture
+def daemon_cfg_verifier(todo_root: Path, store_spec: str) -> DaemonConfig:
+    """Chunk 3 fixture: daemon config with the verifier active.
+
+    Subjective cascade is disabled so verifier tests run token-free by
+    default; the per-test that wants to exercise the cascade injects a
+    fake client directly via `verify_card(...)` instead of relying on
+    the daemon's `_build_subjective_client`.
+    """
+    return DaemonConfig(
+        todo_root=todo_root,
+        store_spec=store_spec,
+        poll_interval_sec=0.1,
+        max_parallel=4,
+        max_parallel_pinned=1,
+        orphan_timeout_minutes=120,
+        heartbeat_interval_sec=0.5,
+        stub_sleep_sec=0.5,
+        worktree_forensic_ttl_hours=24,
+        skip_worktree=True,
+        verifier_enabled=True,
+        verifier_cascade_disabled=True,  # subjective items -> standup, no LLM call.
     )
 
 

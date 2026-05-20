@@ -103,6 +103,11 @@ def spawn_worker(
             "CARDS_RUNNER_MAX_OUTPUT_TOKENS",
             "CARDS_RUNNER_MAX_ESCALATIONS",
             "CARDS_RUNNER_PRICING_JSON",
+            # Chunk 3: flip the SdkInvoker into the tool-using
+            # multi-turn loop when set. The CLI's `--invoker sdk-tools`
+            # sets this in the daemon environment.
+            "CARDS_RUNNER_USE_TOOLS",
+            "CARDS_RUNNER_MAX_TOOL_TURNS",
         ):
             value = os.environ.get(passthrough)
             if value:

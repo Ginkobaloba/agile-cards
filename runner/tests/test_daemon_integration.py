@@ -47,6 +47,11 @@ def test_three_card_backlog_runs_through_the_store(
         heartbeat_interval_sec=0.2,
         stub_sleep_sec=0.4,
         skip_worktree=True,
+        # The chunk 2 baseline this test exercises predates the
+        # verifier. Disable it here so a clean stub-worker exit still
+        # leaves the card `active`, as that chunk's contract said.
+        # Chunk 3 verifier integration has its own end-to-end test.
+        verifier_enabled=False,
     )
     # The daemon opens its OWN store connection inside its thread
     # (SQLite connections are thread-bound); the test thread keeps the
