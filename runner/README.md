@@ -13,16 +13,19 @@ This is a **4-chunk build** per the runner design and
 - **Chunk 2a** shipped the storage layer: a `CardRepository`
   interface with SQLite and Dolt stores, a `card_events` audit table,
   and a v1 filesystem-to-database migration tool.
-- **Chunk 2b-i** (this state) is the **canonical cutover**. The
-  database is now the source of truth. The claim is a transactional
-  store `UPDATE`, not an atomic file move; folder-as-state is a
-  `status` column; the atomic-rename sentinel and the in-place YAML
-  rewriter are deleted. The stub executor is retained.
-- **Chunk 2b-ii** swaps the stub for the real SDK-in-process
-  executor (cost-cap hooks, the `_winapi.CreateProcess` Job Object
-  refinement, the executor cascade). See the chunk 2b handoff.
-- **Chunks 3-4** wire the verifier, merge orchestration, and the
-  reaper.
+- **Chunk 2b-i** was the **canonical cutover**. The database is now
+  the source of truth. The claim is a transactional store `UPDATE`,
+  not an atomic file move; folder-as-state is a `status` column; the
+  atomic-rename sentinel and the in-place YAML rewriter are deleted.
+- **Chunk 2b-ii** (this state) swaps the stub for the real
+  `SdkInvoker` -- an Anthropic-SDK-in-process executor with cost-cap
+  hooks, the `_winapi.CreateProcess` suspended-spawn Job Object
+  refinement, and the confidence cascade. The daemon routes the
+  worker's exit code (cost-cap / cascade-exhausted halts go to
+  `blocked`). The executor is reasoning-only for now; its tool belt
+  is chunk 3. Run it with `cards-runner start --invoker sdk`.
+- **Chunks 3-4** wire the verifier (and the `done` transition), the
+  executor's tool belt, merge orchestration, and the reaper.
 
 ## How card state works after the cutover
 
