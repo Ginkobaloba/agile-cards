@@ -164,37 +164,40 @@ runner/pyproject.toml   anthropic>=0.40 declared
 ## The live verification run
 
 Building everything token-free was the protocol, and it held: the
-entire suite above runs with **zero** real API calls. The remaining
-step is the single minimal live run -- one trivial synthetic card on
-Haiku -- to prove the executor works against the real SDK.
+entire suite above runs with **zero** real API calls. The single
+minimal live run -- one trivial synthetic card on Haiku -- then
+proved the executor works against the real SDK.
 
-**Status: PENDING.** The host has no `ANTHROPIC_API_KEY` set, and
-hunting for a credential is not something this pass should do. The
-run is a single command once a key is present. Recommended form,
-which pins the spend to exactly one Haiku call:
+**Status: PASSED (2026-05-20).** A trivial smoke card (`points: 1`,
+`cost_cap_usd: 0.50`) was seeded into a fresh SQLite store and run
+through the full daemon loop in `--invoker sdk` mode, with
+`CARDS_RUNNER_CASCADE_THRESHOLD=0.0` (pins it to exactly one model
+call) and `CARDS_RUNNER_MAX_OUTPUT_TOKENS=512`. Result:
 
-```powershell
-cd C:\dev\agile-cards\runner
-$env:PYTHONPATH = "src"
-$env:ANTHROPIC_API_KEY = "<key>"
-# Disable escalation so the run is exactly one model call, and cap
-# output so the spend is a fraction of a cent regardless.
-$env:CARDS_RUNNER_CASCADE_THRESHOLD = "0.0"
-$env:CARDS_RUNNER_MAX_OUTPUT_TOKENS = "512"
-cards-runner start --todo-root <a fresh temp dir> --invoker sdk `
-  --skip-worktree --poll-interval-sec 1
-# in another shell, once the card leaves backlog:
-cards-runner status --todo-root <same dir>
-cards-runner stop  --todo-root <same dir>
-```
+- The daemon claimed the card, projected it, spawned the worker under
+  the Job Object via the new `_winapi.CreateProcess` suspended-spawn
+  path -- with the real `anthropic` SDK loaded in that worker, which
+  is exactly the case the refinement was built for -- and reaped it.
+- `SdkInvoker` made **one** Haiku call (`claude-haiku-4-5-20251001`):
+  **627 tokens** (355 in, 272 out), **derived cost $0.001715**
+  against the $0.50 cap. Confidence self-reported 0.99; 0 escalations.
+- The card ended `active` (a clean executor finish is not the `done`
+  arrow -- the verifier owns that, chunk 3), with the SdkInvoker
+  completion report and run-metadata footer in its stored body.
+- Events: `drafted` -> `claimed` -> `executed`. The `executed`
+  payload carried `actual_cost_usd: 0.001715`, `model_used`,
+  `escalations: 0`, `exit_code: 0`, `ok: true`. No `escalated`
+  events, as expected.
 
-Expected: the one card ends `active` with an SdkInvoker completion
-report in its stored body, an `executed` event whose payload carries
-`actual_cost_usd` and `model_used`, and no `escalated` events.
-Estimated spend: well under one US cent.
+**Total real token spend for chunk 2b-ii verification: 627 tokens
+(~$0.0017), one Haiku call.** Everything else is token-free.
 
-When the run is done, fill the figure into the chunk 2b-ii summary
-and this section, and add a one-line PR comment.
+One correction to note for the next engineer: a live run needs a
+card *seeded* into the store first -- the daemon idles against an
+empty store, and there is no `cards-runner add-card` CLI (cards come
+from the `/cards` skill). The run above used a small throwaway
+seed-and-run driver, not committed. A `cards-runner seed` or similar
+dev affordance would be a reasonable small chunk-3 addition.
 
 ## Decisions baked in
 
@@ -281,9 +284,9 @@ on GC.
 
 ## Documented gaps
 
-- **The live run is pending a key.** See "The live verification run".
-  Everything else is verified; this is the one open item, and it is
-  one command.
+- **The live run is done** (see "The live verification run" --
+  PASSED, 627 tokens / ~$0.0017). No gap remains here; kept in the
+  list only as the pointer.
 - **The Dolt store is still not re-verified.** Per the brief, Dolt
   was not installed this pass (`winget install DoltHub.Dolt` needs a
   download only the user can do). The 29 Dolt tests still skip. The
