@@ -29,8 +29,11 @@ deleted) lands in chunk 2b alongside the real executor.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from .models import (
     DEFAULT_TENANT,
+    ActorType,
     Batch,
     CardEvent,
     CardRecord,
@@ -46,8 +49,43 @@ from .repository import (
     SchemaError,
 )
 
+
+def default_store_spec(todo_root: str | Path) -> str:
+    """The store spec a deployment uses when none is given explicitly.
+
+    SQLite, a single `cards.db` file under the TODO root. Per
+    `storage_substrate_v2.md` section 4.5 SQLite is the default and
+    the only store a solo deployment ever touches; Dolt is the opt-in
+    for the distributed multi-runner case. The chunk 2b cutover ships
+    on SQLite because Dolt is not installed on the host yet.
+    """
+    return f"sqlite:{Path(todo_root) / 'cards.db'}"
+
+
+def build_repository(spec: str) -> CardRepository:
+    """Construct a repository from a `sqlite:PATH` or `dolt:DIR` spec.
+
+    The returned repository is NOT schema-initialized; the caller
+    runs `initialize_schema()` (idempotent). The concrete-store
+    imports are deferred so a SQLite deployment never imports the
+    Dolt driver (`pymysql`) and vice versa.
+    """
+    if spec.startswith("sqlite:"):
+        from .sqlite_store import SqliteRepository
+
+        return SqliteRepository(spec[len("sqlite:"):])
+    if spec.startswith("dolt:"):
+        from .dolt_store import DoltRepository
+
+        return DoltRepository.embedded(spec[len("dolt:"):])
+    raise ValueError(
+        f"unknown store spec {spec!r}; use sqlite:PATH or dolt:DIR"
+    )
+
+
 __all__ = [
     "DEFAULT_TENANT",
+    "ActorType",
     "Batch",
     "CardEvent",
     "CardRecord",
@@ -59,4 +97,6 @@ __all__ = [
     "DuplicateCard",
     "RepositoryError",
     "SchemaError",
+    "build_repository",
+    "default_store_spec",
 ]

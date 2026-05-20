@@ -171,6 +171,31 @@ class CardRepository(abc.ABC):
     ) -> CardRecord:
         """Move a card to a new status and append a lifecycle event."""
 
+    @abc.abstractmethod
+    def apply_executor_result(
+        self,
+        card_id: str,
+        *,
+        tenant_id: str = DEFAULT_TENANT,
+        body_md: str | None = None,
+        fields: dict[str, Any] | None = None,
+        event: CardEvent | None = None,
+    ) -> CardRecord:
+        """Write an executor's results back into the store.
+
+        This is the chunk 2b worker-exit path: the runner has parsed
+        the per-run projected card file and now lands the deltas the
+        executor is allowed to produce (the body with its completion
+        notes, plus the small set of executor-owned frontmatter
+        fields) into the database, optionally with one lifecycle
+        event. Unlike `transition` it does not change `status`; a
+        stub or real executor finishing is not by itself a state
+        transition (the verifier owns that, chunk 3).
+
+        The verbatim `frontmatter_raw` capture is never touched.
+        Raises `CardNotFound` if the card id does not exist.
+        """
+
     # ---- events -------------------------------------------------------
 
     @abc.abstractmethod
@@ -407,6 +432,33 @@ class _SqlCardRepository(CardRepository):
             )
         )
         self._durable_commit(f"transition {card_id} {from_status}->{to_status}")
+        got = self.get_card(card_id, tenant_id=tenant_id)
+        assert got is not None
+        return got
+
+    def apply_executor_result(
+        self,
+        card_id: str,
+        *,
+        tenant_id: str = DEFAULT_TENANT,
+        body_md: str | None = None,
+        fields: dict[str, Any] | None = None,
+        event: CardEvent | None = None,
+    ) -> CardRecord:
+        record = self.get_card(card_id, tenant_id=tenant_id)
+        if record is None:
+            raise CardNotFound(f"card {card_id!r} (tenant {tenant_id!r})")
+        if fields:
+            _apply_fields(record, fields)
+        if body_md is not None:
+            record.body_md = body_md
+        record.updated_at = now_utc_iso()
+        self._update_card_row(record)
+        if event is not None:
+            event.tenant_id = tenant_id
+            event.card_id = card_id
+            self._insert_event_row(event)
+        self._durable_commit(f"executor result {card_id}")
         got = self.get_card(card_id, tenant_id=tenant_id)
         assert got is not None
         return got

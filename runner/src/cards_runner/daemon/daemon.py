@@ -1,19 +1,31 @@
-"""The daemon main loop.
+"""The daemon main loop, store-backed.
 
 Responsibilities:
 
 - Singleton enforcement via `.daemon.lock` (file + PID).
-- Boot sanity: atomic-rename sentinel; reconcile `active/` cards.
-- Polling loop: scan backlog/, claim eligible cards, spawn stub
-  workers, watch `active/` for stale heartbeats and dead workers.
-- Clean shutdown: receive a stop signal, tell workers to wrap up,
-  release the singleton lock.
+- Boot sanity: open the card store, initialize the schema, reconcile
+  `active` cards left by a prior daemon.
+- Polling loop: query the store for `backlog` cards, claim eligible
+  ones transactionally, project each into a per-run card file, spawn
+  a worker, mirror worker heartbeats into the store, reclaim
+  orphans, and land worker results back into the store on exit.
+- Clean shutdown: receive a stop signal, drain workers, release the
+  singleton lock, close the store.
 
-Per the cards-are-state principle the daemon holds NO durable state
-of its own. The map of `attempt_trace_id -> ManagedProcess` is an
-in-memory cache only; if the daemon dies, the next boot finds active
-cards on disk and treats anything with a fresh heartbeat as still
-alive (the worker outlived us; do not respawn).
+Per the cards-are-state principle the daemon holds NO durable card
+state of its own. The store is the single source of truth; the map
+of `attempt_trace_id -> _WorkerHandle` is an in-memory cache of live
+subprocesses only. If the daemon dies, the next boot reads `active`
+cards from the store and orphan-reclaims any whose heartbeat went
+stale.
+
+This is the chunk 2b cutover. v1's claim was an atomic file move
+(`backlog/` -> `active/`) plus an in-place frontmatter stamp,
+arbitrated by `os.replace`. The claim is now a transactional
+conditional `UPDATE` in the card store. The atomic-rename sentinel,
+the `max_parallel` demotion it drove, and the malformed-claim
+boot-reconcile window are gone: a transactional claim cannot
+half-succeed the way "move then stamp" could.
 """
 from __future__ import annotations
 
@@ -27,18 +39,27 @@ from pathlib import Path
 from types import FrameType
 from typing import Optional
 
-from ..common.card_io import parse_card_file, scan_card_dir, write_card_file
 from ..common.locks import FileLock, LockHeldError, pid_alive
 from ..common.logging_setup import setup_daemon_logging
 from ..common.process_group import ManagedProcess
 from ..common.types import (
+    PROJECTED_CARD_NAME,
     ClaimedCard,
     DaemonConfig,
     RuntimePaths,
     now_utc_iso,
 )
-from .atomic_rename_sentinel import ensure_sentinel_or_force_serial
-from .claim import ClaimRace, attempt_claim
+from ..store import (
+    DEFAULT_TENANT,
+    ActorType,
+    CardEvent,
+    CardRecord,
+    CardRepository,
+    CardStatus,
+    EventType,
+    build_repository,
+)
+from ..store.projection import ProjectionError, parse_card_text, project_card_file
 from .orphan import reclaim, scan_for_orphans
 from .spawner import spawn_worker
 from .worktree import WorktreeCreateError, prepare_worktree
@@ -61,19 +82,26 @@ class _WorkerHandle:
 class Daemon:
     """The runner daemon.
 
-    Single instance per host. Constructed with a `DaemonConfig`.
-    `run()` blocks until `stop()` is called or a SIGTERM-style signal
-    arrives.
+    Single instance per host. Constructed with a `DaemonConfig`. An
+    already-open `CardRepository` may be injected (tests do this so
+    the daemon shares the test's connection); otherwise the daemon
+    opens its own from `cfg.resolved_store_spec()` at boot and owns
+    its lifecycle. `run()` blocks until `stop()` is called or a
+    SIGTERM-style signal arrives.
     """
 
-    def __init__(self, cfg: DaemonConfig) -> None:
+    def __init__(
+        self, cfg: DaemonConfig, *, repo: CardRepository | None = None
+    ) -> None:
         self.cfg = cfg
         self.paths = RuntimePaths.from_root(cfg.todo_root)
         self.paths.ensure()
+        self.tenant_id = DEFAULT_TENANT
         self._workers: dict[str, _WorkerHandle] = {}
         self._stop_event = threading.Event()
         self._singleton_lock: FileLock | None = None
-        self._effective_max_parallel = cfg.max_parallel
+        self._repo: CardRepository | None = repo
+        self._owns_repo = repo is None
         self._last_tick_at: float = 0.0
         self._last_tick_summary: dict[str, int] = {}
 
@@ -105,6 +133,7 @@ class Daemon:
             self._drain_workers()
             if self._singleton_lock is not None:
                 self._singleton_lock.release()
+            self._close_repo()
         return 0
 
     def stop(self) -> None:
@@ -115,9 +144,22 @@ class Daemon:
         log.info("stop requested; signaling loop")
         self._stop_event.set()
 
+    def close(self) -> None:
+        """Release the owned store connection. For tests that drive
+        `_boot()` / `_tick()` directly without `run()`."""
+        self._close_repo()
+
+    @property
+    def repo(self) -> CardRepository:
+        if self._repo is None:
+            raise RuntimeError("daemon store not open; call _boot() first")
+        return self._repo
+
     @property
     def effective_max_parallel(self) -> int:
-        return self._effective_max_parallel
+        # The transactional claim is correct under concurrency, so
+        # there is no longer a sentinel that can demote parallelism.
+        return self.cfg.max_parallel
 
     @property
     def last_tick_summary(self) -> dict[str, int]:
@@ -126,6 +168,14 @@ class Daemon:
     @property
     def last_tick_at(self) -> float:
         return self._last_tick_at
+
+    def _close_repo(self) -> None:
+        if self._owns_repo and self._repo is not None:
+            try:
+                self._repo.close()
+            except Exception:  # noqa: BLE001
+                log.exception("error closing store")
+            self._repo = None
 
     # ---- singleton lock ----------------------------------------------
 
@@ -175,47 +225,26 @@ class Daemon:
             "daemon booting todo_root=%s poll=%.1fs max_parallel=%d",
             self.paths.todo_root, self.cfg.poll_interval_sec, self.cfg.max_parallel,
         )
-        self._effective_max_parallel = ensure_sentinel_or_force_serial(
-            self.paths, max_parallel=self.cfg.max_parallel
-        )
-        if self._effective_max_parallel != self.cfg.max_parallel:
-            log.warning(
-                "max_parallel reduced %d -> %d",
-                self.cfg.max_parallel, self._effective_max_parallel,
-            )
+        if self._repo is None:
+            spec = self.cfg.resolved_store_spec()
+            log.info("opening card store %s", spec)
+            self._repo = build_repository(spec)
+        self._repo.initialize_schema()
 
-        # Reconcile any cards in active/ from a prior daemon. Per
-        # design section 9 we trust the filesystem: if a card has a
-        # fresh heartbeat we assume a surviving worker still owns it,
-        # so we do NOT respawn. If the heartbeat is stale we orphan-
-        # reclaim it.
-        orphans = scan_for_orphans(paths=self.paths, cfg=self.cfg)
-        for card_path in orphans:
+        # Reconcile any cards left `active` by a prior daemon. We hold
+        # no worker for them (fresh boot), so the only question is
+        # heartbeat staleness. A card whose heartbeat aged past the
+        # orphan window is reclaimed; a card with a fresh heartbeat is
+        # left alone for the poll loop to re-evaluate. There is no
+        # malformed-claim repair path anymore: the transactional claim
+        # stamps every claim field or none of them.
+        for card_id in scan_for_orphans(
+            repo=self.repo, cfg=self.cfg, tenant_id=self.tenant_id
+        ):
             try:
-                reclaim(card_path, paths=self.paths)
-            except Exception as exc:
-                log.error("reclaim failed for %s: %s", card_path, exc)
-
-        # Repair any malformed-claim cards: in active/ but missing
-        # claimed_by. This is the "daemon killed between move and
-        # stamp" window. Re-stamp them so the next pass treats them
-        # like a fresh claim. We do not spawn a worker for them; we
-        # let the orphan loop pick them up.
-        for entry in self.paths.active.iterdir():
-            if not entry.is_file() or entry.suffix != ".md":
-                continue
-            try:
-                snap = parse_card_file(entry)
-            except Exception:
-                continue
-            if snap.get("claimed_by") is None and snap.get("attempt_trace_id") is None:
-                now = now_utc_iso()
-                snap.frontmatter["claimed_by"] = "daemon-boot-reconcile"
-                snap.frontmatter["started_at"] = now
-                snap.frontmatter["last_heartbeat"] = now
-                snap.frontmatter["status"] = "active"
-                write_card_file(entry, snap)
-                log.info("repaired malformed-claim card %s", entry.name)
+                reclaim(self.repo, card_id, tenant_id=self.tenant_id)
+            except Exception as exc:  # noqa: BLE001
+                log.error("boot reclaim failed for %s: %s", card_id, exc)
 
     # ---- polling loop -------------------------------------------------
 
@@ -240,36 +269,48 @@ class Daemon:
             "claims": 0,
             "worker_exits": 0,
         }
-        # 1. Reap exited workers first; this frees parallelism slots.
+        # 1. Reap exited workers; this frees parallelism slots and
+        #    lands their results in the store.
         self._reap_workers(summary)
 
-        # 2. Orphan scan.
-        orphans = scan_for_orphans(paths=self.paths, cfg=self.cfg)
-        for card_path in orphans:
-            handle = self._find_handle_for_card_path(card_path)
+        # 2. Mirror live workers' liveness into the store so a stale
+        #    heartbeat genuinely means a dead worker. Done before the
+        #    orphan scan so a card with a live worker is never seen
+        #    as orphaned.
+        self._bump_heartbeats()
+
+        # 3. Orphan scan against the store.
+        for card_id in scan_for_orphans(
+            repo=self.repo, cfg=self.cfg, tenant_id=self.tenant_id
+        ):
+            handle = self._find_handle_for_card(card_id)
             if handle is not None:
-                # We still have a process. Kill it before reclaiming.
                 log.warning(
-                    "killing stale worker for %s before reclaim",
-                    card_path.name,
+                    "killing stale worker for %s before reclaim", card_id
                 )
                 handle.process.kill_tree(grace_sec=2.0)
                 self._workers.pop(handle.claim.attempt_trace_id, None)
             try:
-                reclaim(card_path, paths=self.paths)
+                reclaim(self.repo, card_id, tenant_id=self.tenant_id)
                 summary["orphans_reclaimed"] += 1
-            except Exception as exc:
-                log.error("reclaim failed for %s: %s", card_path, exc)
+            except Exception as exc:  # noqa: BLE001
+                log.error("reclaim failed for %s: %s", card_id, exc)
 
-        # 3. Claim new cards up to capacity.
-        summary["active_before"] = self._count_active()
-        capacity = self._effective_max_parallel - len(self._workers)
-        for card_path in scan_card_dir(self.paths.backlog):
+        # 4. Claim new cards up to capacity.
+        summary["active_before"] = len(
+            self.repo.query_cards(
+                tenant_id=self.tenant_id, status=CardStatus.ACTIVE.value
+            )
+        )
+        capacity = self.effective_max_parallel - len(self._workers)
+        for record in self.repo.query_cards(
+            tenant_id=self.tenant_id, status=CardStatus.BACKLOG.value
+        ):
             if capacity <= 0:
                 break
-            if not self._can_claim(card_path):
+            if not self._is_eligible(record):
                 continue
-            claim = self._try_claim(card_path)
+            claim = self._try_claim(record)
             if claim is None:
                 continue
             if not self._prepare_and_spawn(claim):
@@ -279,42 +320,54 @@ class Daemon:
 
         self._last_tick_summary = summary
 
-    def _can_claim(self, card_path: Path) -> bool:
-        """Eligibility check (chunk 1 keeps it simple).
+    def _is_eligible(self, record: CardRecord) -> bool:
+        """Claim eligibility. The chunk 2b cutover keeps this simple.
 
-        Chunk 1 ignores `depends_on` and `requires_pre_approval`; those
-        ship in chunks 3 and 4. We only check that the card has a
-        parseable frontmatter and is not already in flight.
+        `query_cards(status="backlog")` already filters to backlog
+        cards. Dependency gating (`depends_on`), story-drift checks,
+        and the pre-approval gate are chunks 3-4 and will read from
+        the store's `dependencies` table and signal markers. For now
+        every backlog card is eligible.
         """
-        try:
-            snap = parse_card_file(card_path)
-        except Exception as exc:
-            log.warning("could not parse %s: %s", card_path, exc)
-            return False
-        if snap.get("status") not in (None, "backlog"):
-            return False
+        del record
         return True
 
-    def _try_claim(self, card_path: Path) -> ClaimedCard | None:
+    def _try_claim(self, record: CardRecord) -> ClaimedCard | None:
+        attempt_trace_id = os.urandom(16).hex()
         try:
-            return attempt_claim(
-                card_path,
-                paths=self.paths,
+            claimed = self.repo.claim_card(
+                record.card_id,
                 claimed_by=f"cards-runner-daemon@pid{os.getpid()}",
+                attempt_trace_id=attempt_trace_id,
+                tenant_id=self.tenant_id,
             )
-        except ClaimRace as exc:
-            log.debug("claim race lost on %s: %s", card_path.name, exc)
-            return None
         except Exception:
-            log.exception("unexpected error claiming %s", card_path.name)
+            log.exception("unexpected error claiming %s", record.card_id)
             return None
+        if claimed is None:
+            log.debug("claim lost / not claimable: %s", record.card_id)
+            return None
+        run_dir = self.paths.runs / attempt_trace_id
+        return ClaimedCard(
+            card_id=claimed.card_id,
+            attempt_trace_id=attempt_trace_id,
+            trace_id=str(claimed.trace_id or attempt_trace_id),
+            run_dir=run_dir,
+            worktree_path=run_dir / "worktree",
+            card_file=run_dir / PROJECTED_CARD_NAME,
+        )
 
     def _prepare_and_spawn(self, claim: ClaimedCard) -> bool:
-        run_dir = self.paths.runs / claim.attempt_trace_id
-        run_dir.mkdir(parents=True, exist_ok=True)
-        project = claim.snapshot.get("project")
-        branch = claim.snapshot.get("branch", f"card/{claim.card_id}")
-        base = claim.snapshot.get("base_branch", "main")
+        claim.run_dir.mkdir(parents=True, exist_ok=True)
+
+        record = self.repo.get_card(claim.card_id, tenant_id=self.tenant_id)
+        if record is None:  # pragma: no cover - just claimed it.
+            log.error("claimed card %s vanished before spawn", claim.card_id)
+            return False
+
+        project = record.project
+        branch = record.field_value("branch") or f"card/{claim.card_id}"
+        base = record.field_value("base_branch") or "main"
         try:
             prepare_worktree(
                 paths=self.paths,
@@ -332,11 +385,21 @@ class Daemon:
             self._rollback_to_backlog(claim)
             return False
 
+        # Project the claimed card into the per-run dir. The worker
+        # reads and writes this file; it is an ephemeral per-run view,
+        # not canonical state. The store row stays authoritative.
+        try:
+            project_card_file(record, claim.card_file, verbatim=False)
+        except Exception:
+            log.exception("card projection failed for %s", claim.card_id)
+            self._rollback_to_backlog(claim)
+            return False
+
         try:
             process = spawn_worker(
                 cfg=self.cfg,
                 claim=claim,
-                run_dir=run_dir,
+                run_dir=claim.run_dir,
             )
         except Exception:
             log.exception("worker spawn failed for %s", claim.card_id)
@@ -351,19 +414,48 @@ class Daemon:
         return True
 
     def _rollback_to_backlog(self, claim: ClaimedCard) -> None:
-        """Move a half-prepared claim back to backlog/."""
+        """Return a half-prepared claim to `backlog` in the store."""
         try:
-            reclaim(claim.active_path, paths=self.paths)
-        except Exception:
+            reclaim(self.repo, claim.card_id, tenant_id=self.tenant_id)
+        except Exception:  # noqa: BLE001
             log.exception("rollback failed for %s", claim.card_id)
+
+    # ---- worker lifecycle --------------------------------------------
+
+    def _bump_heartbeats(self) -> None:
+        """Mirror each live worker's liveness into the store.
+
+        The worker writes its own heartbeat into its projected card
+        file (and touches the worktree heartbeat file). The store --
+        what orphan reclaim reads -- is the runner's to write, so the
+        daemon stamps `last_heartbeat` for every card whose worker
+        process the OS still reports as alive. The heartbeat going
+        stale is therefore exactly equivalent to the worker dying.
+        """
+        now = now_utc_iso()
+        for handle in list(self._workers.values()):
+            if handle.process.poll() is not None:
+                continue
+            try:
+                self.repo.update_card_fields(
+                    handle.claim.card_id,
+                    {"last_heartbeat": now},
+                    tenant_id=self.tenant_id,
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.error(
+                    "heartbeat bump failed for %s: %s",
+                    handle.claim.card_id, exc,
+                )
 
     def _reap_workers(self, summary: dict[str, int]) -> None:
         done: list[str] = []
         for attempt_id, handle in self._workers.items():
             rc = handle.process.poll()
             if rc is None:
-                # Wall-clock safety net: chunk 1 default is generous;
-                # chunk 2 brings the real cost-cap path.
+                # Wall-clock safety net. The real cost-cap path lands
+                # in chunk 2b-ii; this generous default is the
+                # last-resort backstop.
                 age = time.monotonic() - handle.spawned_at
                 if age > self.cfg.force_kill_after_seconds:
                     log.warning(
@@ -384,20 +476,83 @@ class Daemon:
             self._workers.pop(attempt_id, None)
 
     def _post_worker_exit(self, handle: _WorkerHandle, rc: int) -> None:
-        """Chunk 1: stub workers update card frontmatter themselves
-        and exit 0 on success. The daemon does not yet dispatch to
-        the verifier (chunk 3) or merge orchestration (chunk 3-4).
-        We simply observe the exit.
+        """Land a finished worker's results back into the store.
 
-        On non-zero exit we leave the card in `active/`; orphan reclaim
-        will pick it up after the heartbeat goes stale. Chunk 2 wires
-        proper exit-code routing.
+        The worker drove the projected card file: appended completion
+        notes, stamped `finished_at` / `actual_tokens` / `model_used`.
+        The runner parses that file and writes the executor-owned
+        deltas (and only those) into the store, plus one `executed`
+        event. Status is left `active`: a stub or real executor
+        finishing is not itself a transition to `done`; the verifier
+        owns that, which lands in chunk 3.
+
+        On a non-zero exit we still record what the worker wrote (its
+        error notes) and the exit code in the event, then leave the
+        card `active`; its heartbeat will go stale and orphan reclaim
+        will return it to `backlog` for another attempt.
         """
+        claim = handle.claim
+        body_md: str | None = None
+        fields: dict[str, object] = {}
+        if claim.card_file.is_file():
+            try:
+                parsed = parse_card_text(
+                    claim.card_file.read_text(encoding="utf-8")
+                )
+                body_md = parsed.body_md
+                fm = parsed.frontmatter
+                for key in (
+                    "finished_at",
+                    "last_heartbeat",
+                    "actual_tokens",
+                    "actual_duration_minutes",
+                    "model_used",
+                ):
+                    if key in fm:
+                        fields[key] = fm[key]
+            except (ProjectionError, OSError) as exc:
+                log.error(
+                    "could not read back projected card %s: %s",
+                    claim.card_file, exc,
+                )
+        else:
+            log.warning(
+                "projected card file %s missing after worker exit",
+                claim.card_file,
+            )
+
+        event = CardEvent(
+            card_id=claim.card_id,
+            tenant_id=self.tenant_id,
+            type=EventType.EXECUTED.value,
+            actor_id=claim.attempt_trace_id,
+            actor_type=ActorType.EXECUTOR.value,
+            at=now_utc_iso(),
+            payload={
+                "exit_code": rc,
+                "ok": rc == 0,
+                "attempt_trace_id": claim.attempt_trace_id,
+            },
+        )
+        try:
+            self.repo.apply_executor_result(
+                claim.card_id,
+                tenant_id=self.tenant_id,
+                body_md=body_md,
+                fields=fields or None,
+                event=event,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.error(
+                "failed to land worker result for %s: %s",
+                claim.card_id, exc,
+            )
+            return
         if rc != 0:
             log.warning(
-                "worker for card_id=%s exited non-zero (%d); "
-                "leaving card in active/ for orphan reclaim",
-                handle.claim.card_id, rc,
+                "worker for card_id=%s exited non-zero (%d); card left "
+                "active for orphan reclaim",
+                claim.card_id, rc,
             )
 
     def _drain_workers(self) -> None:
@@ -416,16 +571,8 @@ class Daemon:
             handle.process.kill_tree(grace_sec=2.0)
             self._workers.pop(attempt_id, None)
 
-    def _find_handle_for_card_path(self, card_path: Path) -> _WorkerHandle | None:
+    def _find_handle_for_card(self, card_id: str) -> _WorkerHandle | None:
         for handle in self._workers.values():
-            if handle.claim.active_path.name == card_path.name:
+            if handle.claim.card_id == card_id:
                 return handle
         return None
-
-    def _count_active(self) -> int:
-        if not self.paths.active.is_dir():
-            return 0
-        return sum(
-            1 for p in self.paths.active.iterdir()
-            if p.is_file() and p.suffix == ".md"
-        )

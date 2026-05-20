@@ -1,11 +1,18 @@
-"""Shared fixtures for the chunk 1 test suite."""
+"""Shared fixtures for the runner test suite.
+
+After the chunk 2b cutover the card store is canonical. `card_factory`
+inserts a `CardRecord` into a SQLite store rather than dropping a
+Markdown file into `backlog/`; the daemon claims, projects, and runs
+cards out of that store.
+"""
 from __future__ import annotations
 
 import sys
 import textwrap
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 import pytest
 
@@ -21,6 +28,8 @@ if str(SRC_DIR) not in sys.path:
 from cards_runner.common.types import (  # noqa: E402
     DaemonConfig, RuntimePaths,
 )
+from cards_runner.store.projection import card_text_to_record  # noqa: E402
+from cards_runner.store.sqlite_store import SqliteRepository  # noqa: E402
 
 
 def _make_card_text(
@@ -117,9 +126,37 @@ def paths(todo_root: Path) -> RuntimePaths:
 
 
 @pytest.fixture
-def daemon_cfg(todo_root: Path) -> DaemonConfig:
+def store_path(tmp_path: Path) -> Path:
+    """Path to the per-test SQLite card store file."""
+    return tmp_path / "cards.db"
+
+
+@pytest.fixture
+def store_spec(store_path: Path) -> str:
+    return f"sqlite:{store_path}"
+
+
+@pytest.fixture
+def repo(store_path: Path) -> Iterator[SqliteRepository]:
+    """A schema-initialized SQLite card store for the test thread.
+
+    The integration test runs the daemon in its own thread, where the
+    daemon opens its own connection to the same file; SQLite WAL makes
+    that safe. Tests that drive the daemon synchronously inject this
+    repo so there is one connection on one thread.
+    """
+    store = SqliteRepository.open(str(store_path))
+    try:
+        yield store
+    finally:
+        store.close()
+
+
+@pytest.fixture
+def daemon_cfg(todo_root: Path, store_spec: str) -> DaemonConfig:
     return DaemonConfig(
         todo_root=todo_root,
+        store_spec=store_spec,
         poll_interval_sec=0.1,
         max_parallel=4,
         max_parallel_pinned=1,
@@ -132,23 +169,20 @@ def daemon_cfg(todo_root: Path) -> DaemonConfig:
 
 
 @pytest.fixture
-def card_factory(paths: RuntimePaths) -> Any:
-    """Drop a card into `backlog/` and return its path."""
+def card_factory(repo: SqliteRepository) -> Any:
+    """Insert a card into the store and return its id.
 
-    def make(card_id: str = "bTST-01-test", **overrides: Any) -> Path:
-        path = paths.backlog / f"{card_id}.md"
-        path.write_text(_make_card_text(card_id, **overrides), encoding="utf-8")
-        return path
+    Cards are created `backlog` by default. Tests that need an
+    `active` card claim it with `repo.claim_card(...)`, which is the
+    real path and stamps the claim fields the orphan logic reads.
+    """
+
+    def make(card_id: str = "bTST-01-test", *, status: str = "backlog") -> str:
+        text = _make_card_text(card_id, status=status)
+        record = card_text_to_record(
+            text, card_id_fallback=card_id, status_override=status
+        )
+        repo.create_card(record)
+        return card_id
 
     return make
-
-
-@pytest.fixture(autouse=True)
-def _stamp_atomic_rename_sentinel(paths: RuntimePaths) -> Iterator[None]:
-    """Most tests pre-stamp the sentinel so we exercise the parallel path.
-
-    Tests that exercise the sentinel itself remove the file at the
-    top of the test body.
-    """
-    paths.atomic_rename_sentinel.write_text("test", encoding="utf-8")
-    yield

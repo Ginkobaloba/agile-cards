@@ -5,13 +5,16 @@ types; anything richer lives in its owning subpackage.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Final
 
 
-# Canonical subfolder names per RUNNER_CONTRACT.md "Directory invariants".
+# Canonical v1 subfolder names per RUNNER_CONTRACT.md "Directory
+# invariants". After the chunk 2b cutover the database is canonical
+# and the runner no longer keeps folder-as-state; these names survive
+# only so `store.migrate_v1` can walk a legacy v1 tree.
 SUBFOLDER_BACKLOG: Final[str] = "backlog"
 SUBFOLDER_ACTIVE: Final[str] = "active"
 SUBFOLDER_AMENDMENTS: Final[str] = "amendments"
@@ -40,11 +43,13 @@ DAEMON_LOCK_NAME: Final[str] = ".daemon.lock"
 # Global worktree-creation mutex.
 RUNNER_LOCK_NAME: Final[str] = ".runner.lock"
 
-# Atomic-rename-test sentinel name. Lives at TODO root.
-ATOMIC_RENAME_SENTINEL: Final[str] = ".atomic_rename_test.passed"
-
-# Per-worktree halt sentinel (chunk 2 fallback; chunk 1 stubs do not poll).
+# Per-worktree halt sentinel (chunk 2b-ii cost-cap fallback).
 HALT_SENTINEL: Final[str] = ".cards-halt"
+
+# The per-run projected card file name. The runner projects a claimed
+# card into `_runs/<attempt>/` under this name; the worker reads and
+# writes that file exactly as v1 workers read a card in `active/`.
+PROJECTED_CARD_NAME: Final[str] = "card.md"
 
 # Worker-side heartbeat file inside the worktree.
 HEARTBEAT_FILE: Final[str] = ".cards-heartbeat"
@@ -80,61 +85,40 @@ def parse_iso(value: str | None) -> datetime | None:
 
 @dataclass(frozen=True)
 class RuntimePaths:
-    """All the disk paths the daemon and workers reference.
+    """The disk paths the daemon and workers still reference.
 
-    Constructed once at daemon boot and passed down. Makes tests easy
-    (the suite points everything at a tmp directory) and keeps path
-    derivation out of business logic.
+    After the chunk 2b cutover the database is canonical: card state
+    is a `status` column, not a subfolder, so the `backlog/active/...`
+    tree is gone. What remains on disk is genuinely runtime-only --
+    the per-attempt run dirs, preapproval signal markers, and the two
+    coordination locks. The card store itself lives wherever the
+    store spec points (default `<todo_root>/cards.db`).
     """
 
     todo_root: Path
-    backlog: Path
-    active: Path
-    amendments: Path
-    awaiting_standup: Path
-    done: Path
-    blocked: Path
     runs: Path
     signals: Path
     daemon_lock: Path
     runner_lock: Path
-    atomic_rename_sentinel: Path
 
     @classmethod
     def from_root(cls, todo_root: Path) -> "RuntimePaths":
         root = todo_root.resolve()
         return cls(
             todo_root=root,
-            backlog=root / SUBFOLDER_BACKLOG,
-            active=root / SUBFOLDER_ACTIVE,
-            amendments=root / SUBFOLDER_AMENDMENTS,
-            awaiting_standup=root / SUBFOLDER_AWAITING_STANDUP,
-            done=root / SUBFOLDER_DONE,
-            blocked=root / SUBFOLDER_BLOCKED,
             runs=root / RUNS_DIRNAME,
             signals=root / SIGNALS_DIRNAME,
             daemon_lock=root / DAEMON_LOCK_NAME,
             runner_lock=root / RUNNER_LOCK_NAME,
-            atomic_rename_sentinel=root / ATOMIC_RENAME_SENTINEL,
         )
 
     def ensure(self) -> None:
-        """Create the directory layout if missing. Idempotent.
+        """Create the runtime directory layout if missing. Idempotent.
 
-        The daemon calls this at boot. The atomic-rename sentinel is
-        NOT created here; that is the sentinel check's job.
+        The daemon calls this at boot. Only the runtime dirs are made;
+        the card store creates its own file.
         """
-        for d in (
-            self.todo_root,
-            self.backlog,
-            self.active,
-            self.amendments,
-            self.awaiting_standup,
-            self.done,
-            self.blocked,
-            self.runs,
-            self.signals,
-        ):
+        for d in (self.todo_root, self.runs, self.signals):
             d.mkdir(parents=True, exist_ok=True)
 
 
@@ -147,13 +131,14 @@ class DaemonConfig:
     """
 
     todo_root: Path
+    store_spec: str = ""  # "sqlite:PATH" / "dolt:DIR"; empty -> default.
     poll_interval_sec: float = 5.0
     max_parallel: int = 4
     max_parallel_pinned: int = 1
     orphan_timeout_minutes: int = 120
     heartbeat_interval_sec: float = 30.0
     worktree_forensic_ttl_hours: int = 24
-    stub_sleep_sec: float = 3.0  # chunk 1: how long the stub worker sleeps.
+    stub_sleep_sec: float = 3.0  # how long the stub worker sleeps.
     force_kill_after_seconds: int = 90
     skip_worktree: bool = False  # tests bypass git when not on a real repo.
     log_dir: Path | None = None
@@ -161,6 +146,16 @@ class DaemonConfig:
     @property
     def orphan_timeout_sec(self) -> int:
         return int(self.orphan_timeout_minutes * 60)
+
+    def resolved_store_spec(self) -> str:
+        """The store spec to use, falling back to the SQLite default.
+
+        Kept as a method (not resolved at construction) so the default
+        always tracks `todo_root` even if a caller mutates nothing.
+        """
+        if self.store_spec:
+            return self.store_spec
+        return f"sqlite:{self.todo_root / 'cards.db'}"
 
 
 @dataclass
@@ -183,17 +178,22 @@ class CardSnapshot:
 
 @dataclass(frozen=True)
 class ClaimedCard:
-    """A card the daemon has successfully claimed.
+    """A card the daemon has successfully claimed from the store.
 
-    Carries the new path under active/, the per-attempt trace id, and
-    the worktree path the worker will receive.
+    The claim is now a transactional `UPDATE` in the card store, not
+    an atomic file move. What the daemon carries forward is the
+    per-attempt identity plus the disk paths the worker needs: the run
+    dir, the git worktree inside it, and the projected card `.md` file
+    the worker reads and writes (a per-run view, not canonical state).
+    The card's authoritative record lives in the store.
     """
 
     card_id: str
-    active_path: Path
     attempt_trace_id: str
+    trace_id: str
+    run_dir: Path
     worktree_path: Path
-    snapshot: CardSnapshot = field(repr=False)
+    card_file: Path
 
 
 # Exit codes from worker processes. Documented here so the daemon

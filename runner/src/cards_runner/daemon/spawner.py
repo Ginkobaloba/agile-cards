@@ -47,9 +47,9 @@ def spawn_worker(
 ) -> ManagedProcess:
     """Spawn the per-card worker for `claim`.
 
-    The worker is `python -m cards_runner.worker_stub` with the card
-    path and the worktree path passed as CLI arguments. The trace
-    ids are injected via env vars.
+    The worker is `python -m cards_runner.worker_stub`. It reads the
+    projected card file the daemon wrote into the run dir; the card
+    path, worktree path, and trace ids are injected via env vars.
 
     Env block is scrubbed via `common.env_scrub.scrub_environment`.
     Tests assert no `ANTHROPIC_*`, `OPENAI_*`, `AWS_*`, `GH_TOKEN`,
@@ -69,12 +69,10 @@ def spawn_worker(
     pythonpath = os.pathsep.join(pythonpath_entries)
 
     injected: dict[str, str] = {
-        "CARDS_RUNNER_CARD_PATH": str(claim.active_path),
+        "CARDS_RUNNER_CARD_PATH": str(claim.card_file),
         "CARDS_RUNNER_WORKTREE": str(claim.worktree_path),
         "CARDS_RUNNER_ATTEMPT_TRACE_ID": claim.attempt_trace_id,
-        "CARDS_RUNNER_TRACE_ID": str(
-            claim.snapshot.get("trace_id", claim.attempt_trace_id)
-        ),
+        "CARDS_RUNNER_TRACE_ID": claim.trace_id,
         "CARDS_RUNNER_HEARTBEAT_INTERVAL_SEC": str(cfg.heartbeat_interval_sec),
         "CARDS_RUNNER_STUB_SLEEP_SEC": str(cfg.stub_sleep_sec),
         "CARDS_RUNNER_RUN_DIR": str(run_dir),
