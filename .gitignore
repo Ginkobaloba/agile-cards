@@ -3,6 +3,12 @@ Thumbs.db
 .DS_Store
 desktop.ini
 
+# Secrets. A real API key in a committed .env file is a credential
+# leak. The runner reads ANTHROPIC_API_KEY straight from the process
+# environment, never from a .env file, but ignore the pattern anyway.
+.env
+.env.*
+
 # Editors
 .vscode/
 .idea/
