@@ -2,6 +2,7 @@ import { useDroppable } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 
 import type { CardSummary, StatusId } from "../lib/api";
+import { formatCost, type RatesPayload, rollupCost } from "../lib/cost";
 import { statusDotClass } from "../lib/tierBadge";
 import { CardTile } from "./CardTile";
 
@@ -10,14 +11,16 @@ interface Props {
   label: string;
   cards: CardSummary[];
   onOpenCard: (id: string) => void;
+  rates: RatesPayload;
 }
 
 /**
  * A column of cards. Droppable via dnd-kit. Children are wrapped in a
  * SortableContext so each card is draggable.
  */
-export function Column({ id, label, cards, onOpenCard }: Props) {
+export function Column({ id, label, cards, onOpenCard, rates }: Props) {
   const { setNodeRef, isOver } = useDroppable({ id });
+  const rollup = rollupCost(cards, rates.rates, rates.defaultInputRatio);
 
   return (
     <div
@@ -36,9 +39,20 @@ export function Column({ id, label, cards, onOpenCard }: Props) {
             {label}
           </span>
         </span>
-        <span className="shrink-0 rounded-full border border-border bg-panel2 px-1.5 py-0.5 text-[11px] tabular-nums text-muted">
-          {cards.length}
-        </span>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {rollup.kind !== "none" ? (
+            <span
+              className="rounded border border-border bg-panel2 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-muted"
+              title={rollupTitle(rollup.kind, rollup.usd)}
+            >
+              {rollup.kind === "spent" || rollup.kind === "mixed" ? "" : "~"}
+              {formatCost(rollup.usd)}
+            </span>
+          ) : null}
+          <span className="rounded-full border border-border bg-panel2 px-1.5 py-0.5 text-[11px] tabular-nums text-muted">
+            {cards.length}
+          </span>
+        </div>
       </div>
       <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-2">
         <SortableContext
@@ -58,11 +72,34 @@ export function Column({ id, label, cards, onOpenCard }: Props) {
             </div>
           ) : (
             cards.map((c) => (
-              <CardTile key={c.id} card={c} onOpen={onOpenCard} />
+              <CardTile
+                key={c.id}
+                card={c}
+                onOpen={onOpenCard}
+                rates={rates}
+              />
             ))
           )}
         </SortableContext>
       </div>
     </div>
   );
+}
+
+function rollupTitle(
+  kind: "est" | "spent" | "mixed" | "none",
+  usd: number
+): string {
+  const total = `$${usd.toFixed(2)}`;
+  switch (kind) {
+    case "est":
+      return `column estimate: ${total}`;
+    case "spent":
+      return `column spent: ${total}`;
+    case "mixed":
+      return `column total (mixed estimate + spent): ${total}`;
+    case "none":
+    default:
+      return total;
+  }
 }

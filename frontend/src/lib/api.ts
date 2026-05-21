@@ -92,4 +92,6 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ status }),
     }),
+
+  listRates: (): Promise<import("./cost").RatesPayload> => request("/api/rates"),
 };
