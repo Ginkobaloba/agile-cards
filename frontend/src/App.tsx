@@ -5,6 +5,7 @@ import { Header } from "./components/Header";
 import { TokenGate } from "./components/TokenGate";
 import { useAuth } from "./hooks/useAuth";
 import { useCards } from "./hooks/useCards";
+import { useRates } from "./hooks/useRates";
 import { useSSE } from "./hooks/useSSE";
 import { api } from "./lib/api";
 import { Kanban } from "./routes/Kanban";
@@ -20,6 +21,7 @@ import { SubmitStory } from "./routes/SubmitStory";
 export function App() {
   const { isAuthed, signIn } = useAuth();
   const { loading, error, refresh } = useCards(isAuthed);
+  const rates = useRates(isAuthed);
   const [cardsDir, setCardsDir] = useState<string | undefined>(undefined);
 
   useSSE(isAuthed);
@@ -43,7 +45,10 @@ export function App() {
       <Header onRefresh={() => void refresh()} cardsDir={cardsDir} />
       <main className="flex-1">
         <Routes>
-          <Route path="/" element={<Kanban loading={loading} error={error} />} />
+          <Route
+            path="/"
+            element={<Kanban loading={loading} error={error} rates={rates} />}
+          />
           <Route path="/submit" element={<SubmitStory />} />
           <Route path="/sprints" element={<SprintPlanner />} />
           <Route path="/retros" element={<Retros />} />

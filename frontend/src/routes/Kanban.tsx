@@ -10,6 +10,7 @@ import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { CardModal } from "../components/CardModal";
 import { Column } from "../components/Column";
 import { api, ApiError, type Column as ColumnDef, type StatusId } from "../lib/api";
+import type { RatesPayload } from "../lib/cost";
 import { selectCardsByStatus, useStore } from "../state/store";
 
 const COLUMN_FALLBACK: ColumnDef[] = [
@@ -23,6 +24,7 @@ const COLUMN_FALLBACK: ColumnDef[] = [
 interface Props {
   loading: boolean;
   error: string | null;
+  rates: RatesPayload;
 }
 
 /**
@@ -30,7 +32,7 @@ interface Props {
  * of truth for what statuses exist; we keep a fallback list so the page
  * renders even if /api/columns hiccups.
  */
-export function Kanban({ loading, error }: Props) {
+export function Kanban({ loading, error, rates }: Props) {
   const cards = useStore((s) => s.cards);
   const hydrated = useStore((s) => s.hydrated);
   const optimisticMove = useStore((s) => s.optimisticMove);
@@ -130,6 +132,7 @@ export function Kanban({ loading, error }: Props) {
                   label={c.label}
                   cards={cardsByStatus[c.id] ?? []}
                   onOpenCard={(id) => setOpenCard(id)}
+                  rates={rates}
                 />
               )
             )}

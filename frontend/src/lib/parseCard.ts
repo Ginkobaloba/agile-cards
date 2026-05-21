@@ -60,3 +60,23 @@ export function cardDependsOn(c: CardSummary): string[] {
   if (Array.isArray(d)) return d.filter((x): x is string => typeof x === "string");
   return [];
 }
+
+export function cardEstimatedTokens(c: CardSummary): number | null {
+  const v = c.frontmatter["estimated_tokens"];
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null;
+}
+
+export function cardActualTokens(c: CardSummary): number | null {
+  const v = c.frontmatter["actual_tokens"];
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null;
+}
+
+export function cardCostCap(c: CardSummary): number | null {
+  const v = c.frontmatter["cost_cap_usd"];
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null;
+}
+
+export function cardClaimedBy(c: CardSummary): string | null {
+  const v = c.frontmatter["claimed_by"];
+  return typeof v === "string" && v.length > 0 ? v : null;
+}

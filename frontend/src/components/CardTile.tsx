@@ -3,6 +3,12 @@ import { CSS } from "@dnd-kit/utilities";
 
 import type { CardSummary } from "../lib/api";
 import {
+  cardCost,
+  formatCost,
+  type CostLevel,
+  type RatesPayload,
+} from "../lib/cost";
+import {
   cardExtendedThinking,
   cardModel,
   cardPinRequired,
@@ -16,6 +22,7 @@ import { stakesBadgeClass, tierBadgeClass } from "../lib/tierBadge";
 interface Props {
   card: CardSummary;
   onOpen: (id: string) => void;
+  rates: RatesPayload;
 }
 
 /**
@@ -23,7 +30,7 @@ interface Props {
  * detail modal. Dense by design -- the tile carries just enough to
  * triage at a glance; the full frontmatter lives in the modal.
  */
-export function CardTile({ card, onOpen }: Props) {
+export function CardTile({ card, onOpen, rates }: Props) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: card.id });
 
@@ -39,6 +46,7 @@ export function CardTile({ card, onOpen }: Props) {
   const stakes = cardStakes(card);
   const model = cardModel(card);
   const pin = cardPinRequired(card);
+  const cost = cardCost(card, rates.rates, rates.defaultInputRatio);
 
   return (
     <div
@@ -106,6 +114,18 @@ export function CardTile({ card, onOpen }: Props) {
             thinking
           </span>
         ) : null}
+        {cost.kind !== "none" ? (
+          <span
+            className={[
+              "rounded border px-1.5 py-0.5 text-[10px] font-mono tabular-nums",
+              costChipClass(cost.level),
+            ].join(" ")}
+            title={costChipTitle(cost.usd, cost.kind, cost.cap, cost.model)}
+          >
+            {cost.kind === "spent" ? "" : "~"}
+            {formatCost(cost.usd)}
+          </span>
+        ) : null}
       </div>
 
       {model ? (
@@ -118,4 +138,34 @@ export function CardTile({ card, onOpen }: Props) {
       ) : null}
     </div>
   );
+}
+
+function costChipClass(level: CostLevel): string {
+  switch (level) {
+    case "danger":
+      return "text-danger border-danger/40 bg-danger/10";
+    case "warn":
+      return "text-warn border-warn/40 bg-warn/10";
+    case "ok":
+    default:
+      return "text-muted border-border bg-panel";
+  }
+}
+
+function costChipTitle(
+  usd: number,
+  kind: "est" | "spent" | "none",
+  cap: number | null,
+  model: string | null
+): string {
+  const label =
+    kind === "spent"
+      ? "actual cost"
+      : kind === "est"
+        ? "estimated cost"
+        : "cost";
+  const modelStr = model ? ` (${model})` : "";
+  const capStr =
+    cap !== null && cap > 0 ? `, cap $${cap.toFixed(2)}` : "";
+  return `${label}${modelStr}: $${usd.toFixed(4)}${capStr}`;
 }
