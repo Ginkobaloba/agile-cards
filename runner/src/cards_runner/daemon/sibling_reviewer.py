@@ -64,6 +64,7 @@ from .reviewer_cost import (
     would_exceed_card_cap,
     would_exceed_reviewer_cap,
 )
+from .reviewer_history import HistoryEntry, append_entry, utc_now_iso
 
 
 log = logging.getLogger(__name__)
@@ -391,6 +392,34 @@ def _process_card(
 
     _write_marker(marker_path, marker)
     _emit_event(repo, record, decision, marker, tenant_id=tenant_id)
+
+    # Chunk 6d: append to the durable reviewer history. The marker file
+    # is per-card de-dup that the chunk 6d cleanup sweep will delete
+    # once the card terminates; the JSONL is the audit log that
+    # survives that cleanup forever.
+    append_entry(
+        paths,
+        HistoryEntry(
+            at=utc_now_iso(),
+            card_id=record.card_id,
+            kind="sibling_review",
+            decision=decision.decision,
+            reviewer_label=reviewer_config.label,
+            confidence=decision.confidence,
+            model_used=decision.model_used or reviewer_config.model_id,
+            pr_url=pr_url,
+            actual_cost_usd=(
+                decision.usage.cost_usd if decision.usage is not None else None
+            ),
+            input_tokens=(
+                decision.usage.input_tokens if decision.usage is not None else 0
+            ),
+            output_tokens=(
+                decision.usage.output_tokens if decision.usage is not None else 0
+            ),
+        ),
+    )
+
     return ReviewOutcome(
         card_id=record.card_id,
         action="reviewed",

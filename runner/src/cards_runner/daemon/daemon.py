@@ -81,6 +81,7 @@ from .amendment_reviewer import run_amendment_reviews
 from .orphan import reclaim, scan_for_orphans
 from .pr_lifecycle import GhRunner
 from .reaper import reap_forensic_run_dirs
+from .signals_cleanup import sweep_reviewer_markers
 from .sibling_reviewer import (
     AnthropicSiblingReviewerClient,
     SiblingReviewerClient,
@@ -415,6 +416,23 @@ class Daemon:
                     summary["run_dirs_reaped"] += 1
         except Exception:  # noqa: BLE001
             log.exception("forensic reaper failed; continuing")
+
+        # 0.5 Sweep stale reviewer markers (chunk 6d). Same cadence + the
+        #     same "best-effort, retry next tick" semantics as the
+        #     forensic reaper. No-op when reviewer_marker_ttl_hours <= 0.
+        try:
+            for marker_decision in sweep_reviewer_markers(
+                repo=self.repo,
+                cfg=self.cfg,
+                paths=self.paths,
+                tenant_id=self.tenant_id,
+            ):
+                if marker_decision.action in ("removed", "removed_orphan"):
+                    summary["marker_files_swept"] = (
+                        summary.get("marker_files_swept", 0) + 1
+                    )
+        except Exception:  # noqa: BLE001
+            log.exception("reviewer-marker sweep failed; continuing")
 
         # 0a. Chunk 5: unblock cards whose external PR has merged. The
         #     merge gate parks awaiting-merge cards in `blocked` with a
