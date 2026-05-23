@@ -192,6 +192,13 @@ class DaemonConfig:
     # benefit (cleaning up dead refs accumulated by chunk-3-era git work)
     # is rare in steady state.
     worktree_prune_interval_sec: int = 3600
+    # Chunk 6d: cleanup TTL for the per-card reviewer markers under
+    # signals/sibling_reviews/ and signals/amendment_reviews/. The sweep
+    # only removes a marker after this much time has passed AND the
+    # card has reached a terminal state (or no card row exists). Set to
+    # 0 to disable the sweep. Default 72 hours -- long enough that a
+    # Friday-afternoon review can still be debugged on Monday morning.
+    reviewer_marker_ttl_hours: int = 72
     project_config_path: Path | None = None
     log_dir: Path | None = None
 

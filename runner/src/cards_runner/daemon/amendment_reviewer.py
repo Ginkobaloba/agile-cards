@@ -65,6 +65,7 @@ from .reviewer_cost import (
     would_exceed_card_cap,
     would_exceed_reviewer_cap,
 )
+from .reviewer_history import HistoryEntry, append_entry, utc_now_iso
 from .sibling_reviewer import ReviewerDecision, SiblingReviewerClient
 
 
@@ -216,6 +217,7 @@ def _process_card(
                 record,
                 repo=repo,
                 tenant_id=tenant_id,
+                paths=paths,
                 editor_client=editor_client,
                 reviewer_config=reviewer_config,
                 decision=decision,
@@ -224,6 +226,9 @@ def _process_card(
             marker["auto_edit"] = edit_outcome.marker_payload
             _write_marker(marker_path, marker)
             _emit_event(repo, record, decision, marker, tenant_id=tenant_id)
+            _append_review_history(
+                paths, record, decision, reviewer_config=reviewer_config,
+            )
             if edit_outcome.applied:
                 return AmendmentOutcome(
                     card_id=record.card_id,
@@ -254,6 +259,9 @@ def _process_card(
             )
         _write_marker(marker_path, marker)
         _emit_event(repo, record, decision, marker, tenant_id=tenant_id)
+        _append_review_history(
+            paths, record, decision, reviewer_config=reviewer_config,
+        )
         _route_approve(
             record,
             repo=repo,
@@ -270,6 +278,9 @@ def _process_card(
 
     _write_marker(marker_path, marker)
     _emit_event(repo, record, decision, marker, tenant_id=tenant_id)
+    _append_review_history(
+        paths, record, decision, reviewer_config=reviewer_config,
+    )
     if decision.decision == "request_changes":
         # The reviewer is denying the change request: the existing AC
         # stands and the executor resumes.
@@ -368,6 +379,7 @@ def _try_auto_edit(
     *,
     repo: CardRepository,
     tenant_id: str,
+    paths: RuntimePaths,
     editor_client: AmendmentEditorClient,
     reviewer_config: ReviewerConfig,
     decision: ReviewerDecision,
@@ -515,6 +527,24 @@ def _try_auto_edit(
                 "cost": editor_cost_payload,
             },
         )
+    # Chunk 6d: history append for the successful edit.
+    append_entry(
+        paths,
+        HistoryEntry(
+            at=timestamp,
+            card_id=record.card_id,
+            kind="amendment_edit",
+            decision="applied",
+            reviewer_label=reviewer_config.label,
+            confidence=edit.confidence,
+            model_used=edit.model_used or reviewer_config.model_id,
+            ac_index=edit.ac_index,
+            amendment_reason=edit.amendment_reason,
+            actual_cost_usd=edit.actual_cost_usd,
+            input_tokens=edit.input_tokens,
+            output_tokens=edit.output_tokens,
+        ),
+    )
     return _AutoEditOutcome(
         applied=True,
         fallback_reason="",
@@ -735,6 +765,45 @@ def _emit_event(
             "failed to append amendment-review event for %s: %s",
             record.card_id, exc,
         )
+
+
+# ---- history append (chunk 6d) --------------------------------------
+
+
+def _append_review_history(
+    paths: RuntimePaths,
+    record: CardRecord,
+    decision: ReviewerDecision,
+    *,
+    reviewer_config: ReviewerConfig,
+) -> None:
+    """Append a single `amendment_review` entry to the JSONL log.
+
+    The auto-edit path writes a separate `amendment_edit` entry from
+    inside `_try_auto_edit` -- the two-entry shape (one per phase)
+    keeps queries cleanly groupable by kind.
+    """
+    append_entry(
+        paths,
+        HistoryEntry(
+            at=utc_now_iso(),
+            card_id=record.card_id,
+            kind="amendment_review",
+            decision=decision.decision,
+            reviewer_label=reviewer_config.label,
+            confidence=decision.confidence,
+            model_used=decision.model_used or reviewer_config.model_id,
+            actual_cost_usd=(
+                decision.usage.cost_usd if decision.usage is not None else None
+            ),
+            input_tokens=(
+                decision.usage.input_tokens if decision.usage is not None else 0
+            ),
+            output_tokens=(
+                decision.usage.output_tokens if decision.usage is not None else 0
+            ),
+        ),
+    )
 
 
 # ---- cost helpers (chunk 6b) ----------------------------------------
