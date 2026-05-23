@@ -45,6 +45,22 @@ export function SprintFormDialog(props: Props) {
   const [status, setStatus] = useState<SprintStatus>(
     initial?.status ?? "planning"
   );
+  const [pointsTarget, setPointsTarget] = useState<string>(
+    initial?.pointsTarget !== null && initial?.pointsTarget !== undefined
+      ? String(initial.pointsTarget)
+      : ""
+  );
+  const [dollarTarget, setDollarTarget] = useState<string>(
+    initial?.dollarTarget !== null && initial?.dollarTarget !== undefined
+      ? String(initial.dollarTarget)
+      : ""
+  );
+  const [reviewHoursTarget, setReviewHoursTarget] = useState<string>(
+    initial?.reviewHoursTarget !== null &&
+      initial?.reviewHoursTarget !== undefined
+      ? String(initial.reviewHoursTarget)
+      : ""
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,12 +74,30 @@ export function SprintFormDialog(props: Props) {
       setEndsAt(props.sprint.endsAt.slice(0, 10));
       setGoal(props.sprint.goal ?? "");
       setStatus(props.sprint.status);
+      setPointsTarget(
+        props.sprint.pointsTarget !== null
+          ? String(props.sprint.pointsTarget)
+          : ""
+      );
+      setDollarTarget(
+        props.sprint.dollarTarget !== null
+          ? String(props.sprint.dollarTarget)
+          : ""
+      );
+      setReviewHoursTarget(
+        props.sprint.reviewHoursTarget !== null
+          ? String(props.sprint.reviewHoursTarget)
+          : ""
+      );
     } else {
       setName("");
       setStartsAt(defaultStart());
       setEndsAt(defaultEnd());
       setGoal("");
       setStatus("planning");
+      setPointsTarget("");
+      setDollarTarget("");
+      setReviewHoursTarget("");
     }
   }, [props]);
 
@@ -98,6 +132,9 @@ export function SprintFormDialog(props: Props) {
           endsAt,
           goal: goal.trim() ? goal.trim() : null,
           status,
+          pointsTarget: parseTargetInt(pointsTarget),
+          dollarTarget: parseTargetFloat(dollarTarget),
+          reviewHoursTarget: parseTargetFloat(reviewHoursTarget),
         });
       }
     } catch (err: unknown) {
@@ -167,18 +204,55 @@ export function SprintFormDialog(props: Props) {
               />
             </FieldRow>
             {props.mode === "edit" ? (
-              <FieldRow label="Status">
-                <select
-                  value={status}
-                  onChange={(e) => setStatus(e.target.value as SprintStatus)}
-                  className="rounded border border-border bg-panel2 px-2 py-1 text-[12px] text-text focus:border-accent focus:outline-none"
-                >
-                  <option value="planning">planning</option>
-                  <option value="active">active</option>
-                  <option value="completed">completed</option>
-                  <option value="cancelled">cancelled</option>
-                </select>
-              </FieldRow>
+              <>
+                <FieldRow label="Status">
+                  <select
+                    value={status}
+                    onChange={(e) => setStatus(e.target.value as SprintStatus)}
+                    className="rounded border border-border bg-panel2 px-2 py-1 text-[12px] text-text focus:border-accent focus:outline-none"
+                  >
+                    <option value="planning">planning</option>
+                    <option value="active">active</option>
+                    <option value="completed">completed</option>
+                    <option value="cancelled">cancelled</option>
+                  </select>
+                </FieldRow>
+                <div className="grid grid-cols-3 gap-3">
+                  <FieldRow label="Points target">
+                    <input
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={pointsTarget}
+                      onChange={(e) => setPointsTarget(e.target.value)}
+                      className="w-full rounded border border-border bg-panel2 px-2 py-1 text-[12px] text-text focus:border-accent focus:outline-none"
+                      placeholder="—"
+                    />
+                  </FieldRow>
+                  <FieldRow label="$ target">
+                    <input
+                      type="number"
+                      min={0}
+                      step={0.5}
+                      value={dollarTarget}
+                      onChange={(e) => setDollarTarget(e.target.value)}
+                      className="w-full rounded border border-border bg-panel2 px-2 py-1 text-[12px] text-text focus:border-accent focus:outline-none"
+                      placeholder="—"
+                    />
+                  </FieldRow>
+                  <FieldRow label="Review hrs">
+                    <input
+                      type="number"
+                      min={0}
+                      step={0.5}
+                      value={reviewHoursTarget}
+                      onChange={(e) => setReviewHoursTarget(e.target.value)}
+                      className="w-full rounded border border-border bg-panel2 px-2 py-1 text-[12px] text-text focus:border-accent focus:outline-none"
+                      placeholder="—"
+                    />
+                  </FieldRow>
+                </div>
+              </>
             ) : null}
 
             {error ? (
@@ -230,6 +304,27 @@ function FieldRow({
       {children}
     </label>
   );
+}
+
+/**
+ * Empty string -> null (no target). Otherwise parse an integer; non-
+ * finite or negative -> null. Used for points target.
+ */
+function parseTargetInt(s: string): number | null {
+  if (s.trim() === "") return null;
+  const n = parseInt(s, 10);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return n;
+}
+
+/**
+ * Same as parseTargetInt but for float targets ($ and review hours).
+ */
+function parseTargetFloat(s: string): number | null {
+  if (s.trim() === "") return null;
+  const n = parseFloat(s);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return n;
 }
 
 function defaultStart(): string {

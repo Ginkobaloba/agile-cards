@@ -16,8 +16,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
+import { CapacityPanel } from "../components/CapacityPanel";
 import { CardModal } from "../components/CardModal";
 import { SprintFormDialog } from "../components/SprintFormDialog";
+import { useRates } from "../hooks/useRates";
+import { useAuth } from "../hooks/useAuth";
 import {
   ApiError,
   type CardSummary,
@@ -32,6 +35,7 @@ import {
   cardShortId,
   cardTitle,
 } from "../lib/parseCard";
+import { computeSprintCapacity } from "../lib/sprintCapacity";
 import { statusDotClass } from "../lib/tierBadge";
 import { useStore } from "../state/store";
 
@@ -46,6 +50,16 @@ export function SprintDetail() {
   const [editOpen, setEditOpen] = useState(false);
   const [openCard, setOpenCard] = useState<string | null>(null);
   const cards = useStore((s) => s.cards);
+  const { isAuthed } = useAuth();
+  const rates = useRates(isAuthed);
+
+  const capacity = useMemo(
+    () =>
+      sprint && members
+        ? computeSprintCapacity(sprint, members, cards, rates.rates, rates.defaultInputRatio)
+        : null,
+    [sprint, members, cards, rates]
+  );
 
   const load = useCallback(
     async (signal?: AbortSignal): Promise<void> => {
@@ -170,6 +184,13 @@ export function SprintDetail() {
           <div className="mt-1 italic">No goal set.</div>
         )}
       </div>
+
+      {capacity ? (
+        <CapacityPanel
+          capacity={capacity}
+          onEditTargets={() => setEditOpen(true)}
+        />
+      ) : null}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.6fr_1fr]">
         <MemberList
