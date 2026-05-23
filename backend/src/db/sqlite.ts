@@ -147,4 +147,43 @@ function migrate(db: Db): void {
   db.prepare(
     `INSERT OR IGNORE INTO schema_migrations (version) VALUES (?)`
   ).run(4);
+
+  // Schema v5: extend sprints with status + capacity targets + a
+  // soft-delete marker. Existing rows get sensible defaults via DEFAULT
+  // and a one-time backfill UPDATE. ALTER TABLE in SQLite can only ADD
+  // COLUMN with a constant default; no CHECK constraints on the added
+  // column (we validate at the route layer instead).
+  if (!hasColumn(db, "sprints", "status")) {
+    db.exec(
+      `ALTER TABLE sprints ADD COLUMN status TEXT NOT NULL DEFAULT 'planning'`
+    );
+  }
+  if (!hasColumn(db, "sprints", "points_target")) {
+    db.exec(`ALTER TABLE sprints ADD COLUMN points_target INTEGER`);
+  }
+  if (!hasColumn(db, "sprints", "dollar_target")) {
+    db.exec(`ALTER TABLE sprints ADD COLUMN dollar_target REAL`);
+  }
+  if (!hasColumn(db, "sprints", "review_hours_target")) {
+    db.exec(`ALTER TABLE sprints ADD COLUMN review_hours_target REAL`);
+  }
+  if (!hasColumn(db, "sprints", "archived_at")) {
+    db.exec(`ALTER TABLE sprints ADD COLUMN archived_at TEXT`);
+  }
+  db.prepare(
+    `INSERT OR IGNORE INTO schema_migrations (version) VALUES (?)`
+  ).run(5);
+}
+
+interface ColumnInfoRow {
+  name: string;
+}
+
+function hasColumn(db: Db, table: string, column: string): boolean {
+  // PRAGMA table_info doesn't take bound parameters; the table name is
+  // ours (not user-supplied), so safe to interpolate.
+  const rows = db
+    .prepare(`PRAGMA table_info(${table})`)
+    .all() as ColumnInfoRow[];
+  return rows.some((r) => r.name === column);
 }

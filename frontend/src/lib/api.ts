@@ -172,3 +172,87 @@ export interface SavedView {
   createdAt: string;
   updatedAt: string;
 }
+
+export type SprintStatus = "planning" | "active" | "completed" | "cancelled";
+
+export interface Sprint {
+  id: number;
+  name: string;
+  startsAt: string;
+  endsAt: string;
+  goal: string | null;
+  status: SprintStatus;
+  pointsTarget: number | null;
+  dollarTarget: number | null;
+  reviewHoursTarget: number | null;
+  archivedAt: string | null;
+  createdAt: string;
+}
+
+export interface SprintSummary extends Sprint {
+  cardCount: number;
+  plannedPointsSum: number;
+}
+
+export interface SprintCardLink {
+  sprintId: number;
+  cardId: string;
+  plannedPoints: number | null;
+}
+
+export interface SprintCreate {
+  name: string;
+  startsAt: string;
+  endsAt: string;
+  goal?: string | null;
+  status?: SprintStatus;
+}
+
+export interface SprintPatch {
+  name?: string;
+  startsAt?: string;
+  endsAt?: string;
+  goal?: string | null;
+  status?: SprintStatus;
+  pointsTarget?: number | null;
+  dollarTarget?: number | null;
+  reviewHoursTarget?: number | null;
+  archivedAt?: string | null;
+}
+
+export const sprintsApi = {
+  list: (
+    opts: { includeArchived?: boolean } = {}
+  ): Promise<{ sprints: SprintSummary[] }> => {
+    const q = opts.includeArchived ? "?includeArchived=1" : "";
+    return request(`/api/sprints${q}`);
+  },
+  create: (body: SprintCreate): Promise<{ sprint: Sprint }> =>
+    request("/api/sprints", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  get: (
+    id: number
+  ): Promise<{ sprint: Sprint; cards: SprintCardLink[] }> =>
+    request(`/api/sprints/${id}`),
+  patch: (id: number, patch: SprintPatch): Promise<{ sprint: Sprint }> =>
+    request(`/api/sprints/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    }),
+  addCard: (
+    sprintId: number,
+    cardId: string,
+    plannedPoints: number | null
+  ): Promise<void> =>
+    request(`/api/sprints/${sprintId}/cards`, {
+      method: "POST",
+      body: JSON.stringify({ cardId, plannedPoints }),
+    }),
+  removeCard: (sprintId: number, cardId: string): Promise<void> =>
+    request(
+      `/api/sprints/${sprintId}/cards/${encodeURIComponent(cardId)}`,
+      { method: "DELETE" }
+    ),
+};
