@@ -21,6 +21,8 @@ import path from "node:path";
 import { config } from "../config.js";
 import { log } from "../logger.js";
 import { publish } from "../events/bus.js";
+import { deriveEvents } from "../events/derive.js";
+import { appendEvent, countEventsForCard } from "../db/events.js";
 import { parseFrontmatter, rewriteStatus } from "./frontmatter.js";
 
 /**
@@ -143,16 +145,68 @@ function upsert(file: string): Card | null {
     fileToId.delete(previousFile[0]);
   }
 
-  const existed = index.has(card.id);
+  const prev = index.get(card.id) ?? null;
   index.set(card.id, card);
   fileToId.set(file, card.id);
 
   publish({
-    type: existed ? "card-updated" : "card-added",
+    type: prev ? "card-updated" : "card-added",
     cardId: card.id,
     status: card.status,
   });
+  recordDerivedEvents(prev, card);
   return card;
+}
+
+/**
+ * Derive lifecycle events from the diff, persist them, and publish each
+ * one on the SSE bus so the open card-modal timelines update live.
+ * Errors are logged and swallowed -- a single bad row should never take
+ * down the watcher loop.
+ */
+function recordDerivedEvents(prev: Card | null, current: Card): void {
+  try {
+    const derived = deriveEvents(
+      prev
+        ? {
+            id: prev.id,
+            status: prev.status,
+            frontmatter: prev.frontmatter,
+            mtimeMs: prev.mtimeMs,
+          }
+        : null,
+      {
+        id: current.id,
+        status: current.status,
+        frontmatter: current.frontmatter,
+        mtimeMs: current.mtimeMs,
+      }
+    );
+    for (const d of derived) {
+      const row = appendEvent({
+        cardId: d.cardId,
+        type: d.type,
+        at: d.at,
+        details: d.details,
+      });
+      publish({
+        type: "card-event-added",
+        cardId: row.cardId,
+        event: {
+          id: row.id,
+          cardId: row.cardId,
+          type: row.type,
+          at: row.at,
+          details: row.details,
+        },
+      });
+    }
+  } catch (err) {
+    log.warn("derive/persist card event failed", {
+      cardId: current.id,
+      err: String(err),
+    });
+  }
 }
 
 function remove(file: string): void {
@@ -194,6 +248,26 @@ function bootstrap(): void {
       if (!card) continue;
       index.set(card.id, card);
       fileToId.set(file, card.id);
+    }
+  }
+  // First-ever bootstrap: cards that have lived on disk without the
+  // dashboard observing them get a synthesized `discovered` row so the
+  // timeline always has a starting point. countEventsForCard makes this
+  // idempotent across server restarts.
+  for (const card of index.values()) {
+    try {
+      if (countEventsForCard(card.id) > 0) continue;
+      appendEvent({
+        cardId: card.id,
+        type: "discovered",
+        at: new Date(card.mtimeMs).toISOString(),
+        details: { status: card.status, source: "bootstrap" },
+      });
+    } catch (err) {
+      log.warn("bootstrap event backfill failed", {
+        cardId: card.id,
+        err: String(err),
+      });
     }
   }
   log.info("card index ready", { count: index.size });

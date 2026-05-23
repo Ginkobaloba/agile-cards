@@ -128,4 +128,23 @@ function migrate(db: Db): void {
   db.prepare(
     `INSERT OR IGNORE INTO schema_migrations (version) VALUES (?)`
   ).run(3);
+
+  // Schema v4: per-card lifecycle event log. The chokidar watcher derives
+  // these from frontmatter diffs (events/derive.ts) and the card detail
+  // modal renders them as a timeline. Details column is opaque JSON.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS card_events (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      card_id     TEXT    NOT NULL,
+      type        TEXT    NOT NULL,
+      at          TEXT    NOT NULL,
+      details     TEXT,
+      created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_card_events_card_at
+      ON card_events (card_id, at);
+  `);
+  db.prepare(
+    `INSERT OR IGNORE INTO schema_migrations (version) VALUES (?)`
+  ).run(4);
 }

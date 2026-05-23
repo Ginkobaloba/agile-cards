@@ -83,6 +83,14 @@ export interface RankRow {
   rank: number;
 }
 
+export interface CardEventRow {
+  id: number;
+  cardId: string;
+  type: string;
+  at: string;
+  details: unknown;
+}
+
 export interface MoveResponse {
   id: string;
   file: string;
@@ -110,6 +118,19 @@ export const api = {
   listRates: (): Promise<import("./cost").RatesPayload> => request("/api/rates"),
 
   listRanks: (): Promise<{ ranks: RankRow[] }> => request("/api/ranks"),
+
+  listCardEvents: (
+    id: string,
+    opts: { limit?: number; since?: string } = {}
+  ): Promise<{ events: CardEventRow[] }> => {
+    const params = new URLSearchParams();
+    if (typeof opts.limit === "number") params.set("limit", String(opts.limit));
+    if (opts.since) params.set("since", opts.since);
+    const q = params.toString();
+    return request(
+      `/api/cards/${encodeURIComponent(id)}/events${q ? `?${q}` : ""}`
+    );
+  },
 
   setRank: (
     id: string,

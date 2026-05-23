@@ -4,6 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { api, ApiError, type CardDetail } from "../lib/api";
+import { Timeline } from "./Timeline";
 
 interface Props {
   cardId: string | null;
@@ -64,6 +65,7 @@ export function CardModal({ cardId, onClose }: Props) {
               <div className="text-muted text-sm italic">loading…</div>
             ) : (
               <>
+                <Timeline cardId={card.id} />
                 <FrontmatterTable fm={card.frontmatter} file={card.file} />
                 <div className="markdown text-sm">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
