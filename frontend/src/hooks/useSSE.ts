@@ -12,6 +12,7 @@ import { useEffect } from "react";
 
 import { api } from "../lib/api";
 import { getToken } from "../lib/auth";
+import { apiPath } from "../lib/baseUrl";
 import { useStore } from "../state/store";
 
 interface EventEnvelope {
@@ -29,7 +30,7 @@ export function useSSE(authed: boolean) {
     const token = getToken();
     if (!token) return;
 
-    const url = `/events?token=${encodeURIComponent(token)}`;
+    const url = apiPath(`/events?token=${encodeURIComponent(token)}`);
     const es = new EventSource(url);
 
     const handleCardChange = (cardId: string): void => {

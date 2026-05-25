@@ -38,8 +38,12 @@ function main(): void {
   app.use(
     cors({
       origin: (origin, cb) => {
-        // Allow same-origin (no Origin) and the configured dev origin.
-        if (!origin || origin === config.corsOrigin) return cb(null, true);
+        // Allow same-origin (no Origin) and any configured origin.
+        // CORS_ORIGIN is a comma-separated list so the same backend can
+        // serve standalone dev plus the Paradigm portal hostname.
+        if (!origin || config.corsOrigins.includes(origin)) {
+          return cb(null, true);
+        }
         cb(new Error(`origin ${origin} not allowed`));
       },
       credentials: false,
