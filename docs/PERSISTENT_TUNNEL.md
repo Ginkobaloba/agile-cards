@@ -9,8 +9,8 @@ Most of these steps need Drew's Cloudflare account access -- they cannot
 be automated from inside this repo.
 
 - **Tunnel name:** `agile-cards-board-tunnel`
-- **Tunnel ID:** `f9154c80-2626-40a5-bafd-91d873542779`
-- **Account ID:** `298b5a830c602a211a824bd6925fb3c8`
+- **Tunnel ID:** `<YOUR_TUNNEL_ID>` (look up in Zero Trust -> Networks -> Tunnels)
+- **Account ID:** `<YOUR_ACCOUNT_ID>` (visible in the dashboard URL once logged in)
 - **Target public hostname:** `app.projectnexuscode.org` (already wired in
   the compose file's `cloudflared` service comments)
 
@@ -34,7 +34,7 @@ in the dev pool continue to use `localhost:5173` directly.
 
 Alternative (API): with an account-scoped token that has
 `Cloudflare Tunnel:Read`, hit
-`GET /accounts/298b5a830c602a211a824bd6925fb3c8/cfd_tunnel/f9154c80-2626-40a5-bafd-91d873542779/token`.
+`GET /accounts/<YOUR_ACCOUNT_ID>/cfd_tunnel/<YOUR_TUNNEL_ID>/token`.
 
 ## 2. Set the DNS route / public hostname
 
