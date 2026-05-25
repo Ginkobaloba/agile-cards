@@ -9,6 +9,7 @@ import { type ReactNode, useEffect, useMemo, useState } from "react";
 
 import { CardModal } from "../components/CardModal";
 import { Column } from "../components/Column";
+import { DependencyView } from "../components/DependencyView";
 import { FilterBar } from "../components/FilterBar";
 import {
   api,
@@ -52,6 +53,7 @@ export function Kanban({ loading, error, rates }: Props) {
 
   const [columns, setColumns] = useState<ColumnDef[]>(COLUMN_FALLBACK);
   const [openCard, setOpenCard] = useState<string | null>(null);
+  const [depViewOpen, setDepViewOpen] = useState(false);
   const [moveError, setMoveError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -180,9 +182,15 @@ export function Kanban({ loading, error, rates }: Props) {
     gridTemplateColumns: `repeat(${columns.length}, minmax(260px, 1fr))`,
   };
 
+  // Flat list of visible cards (post-filter) for the dep-view modal.
+  const visibleCards = useMemo(
+    () => (Object.keys(cardsByStatus) as StatusId[]).flatMap((s) => cardsByStatus[s]),
+    [cardsByStatus]
+  );
+
   return (
     <div className="flex flex-col">
-      <FilterBar />
+      <FilterBar onOpenDepView={() => setDepViewOpen(true)} />
       <div className="flex flex-col gap-3 px-5 py-4">
         {hydrated && error ? <Banner>{error}</Banner> : null}
         {moveError ? <Banner>move failed: {moveError}</Banner> : null}
@@ -212,6 +220,12 @@ export function Kanban({ loading, error, rates }: Props) {
         )}
 
         <CardModal cardId={openCard} onClose={() => setOpenCard(null)} />
+        <DependencyView
+          open={depViewOpen}
+          onClose={() => setDepViewOpen(false)}
+          cards={visibleCards}
+          onOpenCard={(id) => setOpenCard(id)}
+        />
       </div>
     </div>
   );

@@ -9,6 +9,10 @@ import {
 import { useLens } from "../state/lens";
 import { FilterChip, TriChip } from "./FilterChip";
 
+interface FilterBarProps {
+  onOpenDepView?: () => void;
+}
+
 /**
  * Sits above the kanban grid. Renders a search input plus a row of
  * dismissable filter chips. Each chip's options derive from the live
@@ -18,7 +22,7 @@ import { FilterChip, TriChip } from "./FilterChip";
  * Filter state lives in `useFilters`; the kanban's selector consumes
  * the same state to decide which cards to render.
  */
-export function FilterBar() {
+export function FilterBar({ onOpenDepView }: FilterBarProps = {}) {
   const cards = useStore((s) => s.cards);
   const filters = useFilters();
   const setSearch = useFilters((s) => s.setSearch);
@@ -104,6 +108,16 @@ export function FilterBar() {
       ) : null}
 
       <div className="flex-1" />
+      {onOpenDepView ? (
+        <button
+          type="button"
+          onClick={onOpenDepView}
+          className="rounded border border-border bg-panel2 px-2 py-0.5 text-[11px] text-muted hover:text-text hover:border-accent/40"
+          title="Show the dependency DAG of the currently visible cards"
+        >
+          Deps…
+        </button>
+      ) : null}
       <GroupByToggle />
       {activeCount > 0 ? (
         <button
