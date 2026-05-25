@@ -5,11 +5,20 @@
  * keeps the call sites obvious.
  */
 
+export interface CardEventPayload {
+  readonly id: number;
+  readonly cardId: string;
+  readonly type: string;
+  readonly at: string;
+  readonly details: unknown;
+}
+
 export type BoardEvent =
   | { type: "card-state-changed"; cardId: string; status: string }
   | { type: "card-added"; cardId: string; status: string }
   | { type: "card-removed"; cardId: string }
   | { type: "card-updated"; cardId: string; status: string }
+  | { type: "card-event-added"; cardId: string; event: CardEventPayload }
   | { type: "sprint-status-changed"; sprintId: number }
   | { type: "heartbeat" };
 
