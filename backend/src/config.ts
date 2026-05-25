@@ -11,7 +11,12 @@ export interface Config {
   readonly port: number;
   readonly cardsDir: string;
   readonly dbPath: string;
-  readonly corsOrigin: string;
+  /**
+   * Allowed CORS origins. Parsed from CORS_ORIGIN as a comma-separated
+   * list so the same backend can serve both the standalone dev origin
+   * and the Paradigm portal origin (which proxies through to /board/).
+   */
+  readonly corsOrigins: ReadonlyArray<string>;
   readonly logLevel: "error" | "warn" | "info" | "debug";
 }
 
@@ -36,6 +41,16 @@ function envLogLevel(): Config["logLevel"] {
   throw new Error(`LOG_LEVEL must be one of error|warn|info|debug, got ${v}`);
 }
 
+function envCorsOrigins(): ReadonlyArray<string> {
+  const raw = envStr("CORS_ORIGIN", "http://localhost:5173");
+  return Object.freeze(
+    raw
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
+  );
+}
+
 const defaultCardsDir =
   process.platform === "win32" ? "C:\\dev\\todo" : path.resolve("./todo");
 
@@ -45,6 +60,6 @@ export const config: Config = Object.freeze({
   port: envInt("PORT", 4070),
   cardsDir: envStr("CARDS_DIR", defaultCardsDir),
   dbPath: envStr("DB_PATH", defaultDbPath),
-  corsOrigin: envStr("CORS_ORIGIN", "http://localhost:5173"),
+  corsOrigins: envCorsOrigins(),
   logLevel: envLogLevel(),
 });

@@ -105,9 +105,48 @@ Environment variables read by the backend at startup:
 | `PORT`       | `4070`                                 | HTTP port the backend binds                      |
 | `CARDS_DIR`  | `C:\dev\todo`                          | Where the card files live                        |
 | `DB_PATH`    | `./data/board.sqlite`                  | SQLite database file                             |
-| `CORS_ORIGIN`| `http://localhost:5173`                | Allowed origin for the Vite dev server           |
+| `CORS_ORIGIN`| `http://localhost:5173`                | Allowed origin(s) for browser calls. Comma-separated list. |
 | `LOG_LEVEL`  | `info`                                 | `error`, `warn`, `info`, `debug`                 |
 | `CLAUDE_CLI_PATH` | `claude`                          | Override the `claude` CLI binary path for the planner invoker |
+
+Frontend build-time variables:
+
+| var               | default | what it does                                              |
+|-------------------|---------|-----------------------------------------------------------|
+| `VITE_BASE_PATH`  | `/`     | URL prefix the app is served from. Set to `/board/` to host this stack behind the Paradigm portal reverse proxy. Bakes into both Vite's `base` (asset URLs + React Router `basename`) and the nginx location prefixes inside the docker image. |
+
+## Hosting behind the Paradigm portal
+
+The Paradigm portal at `portal.projectnexuscode.org` reverse-proxies
+`/board/` through to this app. To build an image that serves correctly
+under that prefix:
+
+```powershell
+$env:BASE_PATH = "/board/"
+$env:CORS_ORIGIN = "https://portal.projectnexuscode.org"
+docker compose build
+docker compose up -d
+```
+
+The trailing slash on `BASE_PATH` matters. The frontend container will
+serve at `/board/`, expect API calls at `/board/api/*`, SSE at
+`/board/events`, and health at `/board/healthz`. Cloudflare Access on
+`*.projectnexuscode.org` enforces identity at the edge; the portal's
+reverse-proxy rule routes `/board/` to this stack's frontend container
+without rewriting the path.
+
+For local dev under a base path:
+
+```powershell
+$env:VITE_BASE_PATH = "/board/"
+cd frontend
+npm run dev
+# open http://localhost:5173/board/
+```
+
+The Vite dev proxy strips the `/board` prefix off `/api`, `/events`,
+and `/healthz` before forwarding to the backend, so the backend keeps
+its single-mount-point routes.
 
 ## Submitting a story
 

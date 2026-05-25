@@ -3,6 +3,11 @@
 # Single-host run. Backend talks to a bind-mounted card store on the host
 # and persists SQLite to a named volume. Nginx serves the built frontend
 # static files and proxies /api + /events to the backend.
+#
+# BASE_PATH drives where the frontend lives in the URL space. Default
+# is "/" (back-compat with the pre-portal deployment); set BASE_PATH in
+# the environment (or in a .env file alongside this compose file) to
+# "/board/" to host this stack behind the Paradigm portal reverse proxy.
 
 services:
   backend:
@@ -15,7 +20,11 @@ services:
       PORT: "4070"
       CARDS_DIR: "/cards"
       DB_PATH: "/data/board.sqlite"
-      CORS_ORIGIN: "http://localhost:8080"
+      # CORS_ORIGIN is a comma-separated list. The default covers the
+      # docker frontend (localhost:8080) plus the portal hostname so
+      # browser calls coming through the portal reverse proxy are
+      # accepted. Add more origins as needed.
+      CORS_ORIGIN: "${CORS_ORIGIN:-http://localhost:8080,https://portal.projectnexuscode.org}"
       LOG_LEVEL: "info"
     volumes:
       # Host card store. Edit the source path on the left for your machine.
@@ -29,6 +38,8 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.frontend
+      args:
+        BASE_PATH: "${BASE_PATH:-/}"
     container_name: agile-cards-board-frontend
     restart: unless-stopped
     depends_on:

@@ -11,6 +11,7 @@
  */
 
 import { getToken } from "./auth";
+import { apiPath } from "./baseUrl";
 
 export interface SubmitRequest {
   readonly story: string;
@@ -53,7 +54,7 @@ export async function* streamSubmit(
   if (req.mode) body["mode"] = req.mode;
   if (req.deepPlanning) body["deep_planning"] = true;
 
-  const res = await fetch("/api/stories/submit", {
+  const res = await fetch(apiPath("/api/stories/submit"), {
     method: "POST",
     headers,
     body: JSON.stringify(body),
@@ -123,7 +124,7 @@ export async function approveBatch(batchId: string): Promise<ApprovedResult> {
   const headers = new Headers({ "Content-Type": "application/json" });
   if (token) headers.set("Authorization", `Bearer ${token}`);
   const res = await fetch(
-    `/api/stories/${encodeURIComponent(batchId)}/approve`,
+    apiPath(`/api/stories/${encodeURIComponent(batchId)}/approve`),
     { method: "POST", headers }
   );
   const j = (await res.json()) as
@@ -143,7 +144,7 @@ export async function cancelBatch(batchId: string): Promise<void> {
   const token = getToken();
   const headers = new Headers({ "Content-Type": "application/json" });
   if (token) headers.set("Authorization", `Bearer ${token}`);
-  await fetch(`/api/stories/${encodeURIComponent(batchId)}/cancel`, {
+  await fetch(apiPath(`/api/stories/${encodeURIComponent(batchId)}/cancel`), {
     method: "POST",
     headers,
   }).catch(() => {

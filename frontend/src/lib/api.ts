@@ -5,6 +5,7 @@
  * caller.
  */
 
+import { apiPath } from "./baseUrl";
 import { getToken } from "./auth";
 
 export type StatusId =
@@ -53,7 +54,7 @@ async function request<T>(
     headers.set("Content-Type", "application/json");
   }
 
-  const res = await fetch(path, { ...init, headers });
+  const res = await fetch(apiPath(path), { ...init, headers });
   const text = await res.text();
   let payload: unknown = null;
   if (text.length > 0) {
