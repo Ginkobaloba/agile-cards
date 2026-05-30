@@ -43,3 +43,12 @@ node_modules/
 # If you ever symlink the runtime dir in here for convenience, ignore it.
 todo/
 _batches/
+
+##########################
+# Probe / Claude / Python build artifacts (added 2026-05-29 per retro auto-actionable batch)
+##########################
+.claude/
+**/*.egg-info/
+.tmp_*
+.size_test
+.write_test
