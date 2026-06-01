@@ -90,6 +90,7 @@ _CANONICAL_FIELD_ORDER: tuple[str, ...] = (
     "points",
     "stakes",
     "difficulty",
+    "work_type",
     "thinking_depth",
     "model",
     "extended_thinking",
@@ -265,6 +266,7 @@ _PROMOTABLE_ATTRS: frozenset[str] = frozenset({
     "story_hash",
     "trace_id",
     "pr_url",
+    "work_type",
 })
 
 
