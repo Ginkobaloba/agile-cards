@@ -179,6 +179,31 @@ def test_fold_human_review_wall_from_open_and_merge() -> None:
     assert row.merged_at == "2026-06-01T01:00:00Z"
 
 
+def test_fold_tolerates_corrupt_event() -> None:
+    """A JSON-valid but garbage event (non-numeric tier / tokens / junk
+    timestamp) must not raise; the row comes back flagged incomplete.
+    `fold_events` is advertised as total for the replay verification."""
+    events = [
+        ev.MetricsEvent(at="t", card_id="b1", tenant_id=TENANT,
+                        kind=ev.KIND_CARD_CREATED, dedup_key="b1",
+                        payload={"work_type": "feature", "tier": "not-an-int"}),
+        ev.MetricsEvent(at="t", card_id="b1", tenant_id=TENANT,
+                        kind=ev.KIND_EXECUTOR_EXITED, dedup_key="att-1",
+                        payload={"tokens": "lots", "wall_seconds": "soon"}),
+        ev.MetricsEvent(at="t", card_id="b1", tenant_id=TENANT,
+                        kind=ev.KIND_PR_OPENED, dedup_key="opened:b1",
+                        payload={"pr_opened_at": "garbage"}),
+        ev.MetricsEvent(at="t", card_id="b1", tenant_id=TENANT,
+                        kind=ev.KIND_PR_MERGED, dedup_key="b1",
+                        payload={"merged_at": "also-garbage"}),
+    ]
+    row = fold_events(events)  # must not raise
+    assert row is not None
+    assert row.incomplete_metrics is True
+    assert row.executor_tokens_total == 0  # junk token coerces to 0
+    assert row.human_review_wall_seconds is None  # junk timestamps -> None
+
+
 def test_fold_missing_work_type_is_incomplete() -> None:
     events = [ev.MetricsEvent(
         at="t", card_id="b1", tenant_id=TENANT,

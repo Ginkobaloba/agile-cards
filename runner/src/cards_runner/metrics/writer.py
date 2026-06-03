@@ -81,53 +81,62 @@ def fold_events(events: Iterable[ev.MetricsEvent]) -> CardMetricsFullRow | None:
 
     for event in materialized:
         payload = event.payload
-        if payload.get("incomplete"):
-            incomplete_flag = True
+        try:
+            if payload.get("incomplete"):
+                incomplete_flag = True
 
-        if event.kind == ev.KIND_CARD_CREATED:
-            if payload.get("work_type") is not None:
-                work_type = str(payload["work_type"])
-            if payload.get("tier") is not None:
-                tier = int(payload["tier"])
-            if payload.get("pin_required") is not None:
-                pin_required = bool(payload["pin_required"])
-            if payload.get("contract_authored_at") is not None:
-                contract_authored_at = str(payload["contract_authored_at"])
-        elif event.kind == ev.KIND_CARD_STARTED:
-            value = payload.get("started_at")
-            if value is not None:
-                text = str(value)
-                if started_at is None or text < started_at:
-                    started_at = text
-        elif event.kind == ev.KIND_EXECUTOR_EXITED:
-            exec_attempts[event.dedup_key] = payload
-        elif event.kind == ev.KIND_VERIFIER_DECIDED:
-            verifier_runs[event.dedup_key] = payload
-        elif event.kind == ev.KIND_REWORK_TRIGGERED:
-            rework_keys.add(event.dedup_key)
-        elif event.kind == ev.KIND_REVIEWER_SPEND:
-            reviewer_calls[event.dedup_key] = payload
-        elif event.kind == ev.KIND_PR_OPENED:
-            # One kind carries two last-wins scalars on distinct dedup
-            # keys: the PR-open timestamp and the merge-gate decision.
-            if payload.get("pr_opened_at") is not None:
-                pr_opened_at = str(payload["pr_opened_at"])
-            if payload.get("merge_gate") is not None:
-                merge_gate = str(payload["merge_gate"])
-        elif event.kind == ev.KIND_PR_MERGED:
-            if payload.get("merged_at") is not None:
-                merged_at = str(payload["merged_at"])
-            if payload.get("diff_lines_added") is not None:
-                diff_added = int(payload["diff_lines_added"])
-            if payload.get("diff_lines_removed") is not None:
-                diff_removed = int(payload["diff_lines_removed"])
-            if payload.get("human_review_wall_seconds") is not None:
-                human_review_wall = float(payload["human_review_wall_seconds"])
-        elif event.kind == ev.KIND_REGRESSION_FLAGGED:
-            regression_ids.add(event.dedup_key)
-        elif event.kind == ev.KIND_CONTRACT_OUTCOME:
-            if payload.get("contract_survived") is not None:
-                contract_survived = bool(payload["contract_survived"])
+            if event.kind == ev.KIND_CARD_CREATED:
+                if payload.get("work_type") is not None:
+                    work_type = str(payload["work_type"])
+                if payload.get("tier") is not None:
+                    tier = int(payload["tier"])
+                if payload.get("pin_required") is not None:
+                    pin_required = bool(payload["pin_required"])
+                if payload.get("contract_authored_at") is not None:
+                    contract_authored_at = str(payload["contract_authored_at"])
+            elif event.kind == ev.KIND_CARD_STARTED:
+                value = payload.get("started_at")
+                if value is not None:
+                    text = str(value)
+                    if started_at is None or text < started_at:
+                        started_at = text
+            elif event.kind == ev.KIND_EXECUTOR_EXITED:
+                exec_attempts[event.dedup_key] = payload
+            elif event.kind == ev.KIND_VERIFIER_DECIDED:
+                verifier_runs[event.dedup_key] = payload
+            elif event.kind == ev.KIND_REWORK_TRIGGERED:
+                rework_keys.add(event.dedup_key)
+            elif event.kind == ev.KIND_REVIEWER_SPEND:
+                reviewer_calls[event.dedup_key] = payload
+            elif event.kind == ev.KIND_PR_OPENED:
+                # One kind carries two last-wins scalars on distinct dedup
+                # keys: the PR-open timestamp and the merge-gate decision.
+                if payload.get("pr_opened_at") is not None:
+                    pr_opened_at = str(payload["pr_opened_at"])
+                if payload.get("merge_gate") is not None:
+                    merge_gate = str(payload["merge_gate"])
+            elif event.kind == ev.KIND_PR_MERGED:
+                if payload.get("merged_at") is not None:
+                    merged_at = str(payload["merged_at"])
+                if payload.get("diff_lines_added") is not None:
+                    diff_added = int(payload["diff_lines_added"])
+                if payload.get("diff_lines_removed") is not None:
+                    diff_removed = int(payload["diff_lines_removed"])
+                if payload.get("human_review_wall_seconds") is not None:
+                    human_review_wall = float(
+                        payload["human_review_wall_seconds"]
+                    )
+            elif event.kind == ev.KIND_REGRESSION_FLAGGED:
+                regression_ids.add(event.dedup_key)
+            elif event.kind == ev.KIND_CONTRACT_OUTCOME:
+                if payload.get("contract_survived") is not None:
+                    contract_survived = bool(payload["contract_survived"])
+        except (ValueError, TypeError):
+            # A corrupt-but-JSON-valid event (non-numeric tokens, junk
+            # scalar) must not crash the rebuild. Skip it and flag the row
+            # incomplete so the estimator excludes it; `fold_events` stays
+            # total, which the section-12.3 replay tool relies on.
+            incomplete_flag = True
 
     agent_attempts = len(exec_attempts) or None
     agent_wall_seconds: float | None = (
@@ -409,23 +418,38 @@ class LedgerWriter:
 
 
 def _wall_seconds(start_iso: str, end_iso: str) -> float | None:
-    start = parse_iso(start_iso)
-    end = parse_iso(end_iso)
+    """Seconds between two ISO timestamps, or None if either is unparseable.
+
+    Total by contract: a junk timestamp in the log yields None rather
+    than propagating parse_iso's ValueError into the fold."""
+    try:
+        start = parse_iso(start_iso)
+        end = parse_iso(end_iso)
+    except ValueError:
+        return None
     if start is None or end is None:
         return None
     return max(0.0, (end - start).total_seconds())
 
 
 def _as_int(value: Any) -> int:
+    """Coerce to int, defaulting to 0 on None or a non-numeric value so
+    the accumulator sums never raise on a corrupt log line."""
     if value is None:
         return 0
-    return int(value)
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return 0
 
 
 def _as_float(value: Any) -> float:
     if value is None:
         return 0.0
-    return float(value)
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return 0.0
 
 
 __all__ = [
