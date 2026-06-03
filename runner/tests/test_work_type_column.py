@@ -150,6 +150,37 @@ def test_card_without_work_type_loads_as_none(store_path: Path) -> None:
     assert record.work_type is None
 
 
+def test_projection_rejects_noncanonical_work_type(store_path: Path) -> None:
+    """Spec section 4.1: the runner validates work_type on projection and
+    rejects an unknown enum value with a clear error. A planner typo must
+    fail loudly rather than silently fragmenting the estimator buckets."""
+    import pytest
+
+    from cards_runner.store.projection import ProjectionError
+
+    text = _card_text("bWT-05", points=2).replace(
+        "merge_status: pending\n",
+        "merge_status: pending\nwork_type: feaure\n",  # typo on purpose.
+    )
+    with pytest.raises(ProjectionError) as excinfo:
+        card_text_to_record(text)
+    message = str(excinfo.value)
+    assert "feaure" in message
+    assert "work_type" in message
+
+
+def test_projection_accepts_unknown_work_type(store_path: Path) -> None:
+    """`unknown` is a canonical value (the backfill escape valve), so an
+    explicit `work_type: unknown` projects without error even though new
+    planner-authored cards are not supposed to use it."""
+    text = _card_text("bWT-06", points=2).replace(
+        "merge_status: pending\n",
+        "merge_status: pending\nwork_type: unknown\n",
+    )
+    record = card_text_to_record(text)
+    assert record.work_type == WORK_TYPE_UNKNOWN
+
+
 def test_query_cards_returns_work_type(repo: SqliteRepository) -> None:
     text = _card_text("bWT-03", points=2).replace(
         "merge_status: pending\n",
