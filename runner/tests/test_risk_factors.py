@@ -193,6 +193,68 @@ def test_deterministic_only_card_has_empty_risk_factors(tmp_path: Path) -> None:
     assert result.risk_factors == ()
 
 
+def test_stronger_tier_risk_factors_supersede(tmp_path: Path) -> None:
+    """When the cascade climbs, the stronger tier's non-empty risk list
+    supersedes the weaker tier's (spec 3.6: strongest read is most
+    authoritative)."""
+    body = _body_with(
+        "  - description: 'tone'\n"
+        "    type: subjective\n"
+    )
+    haiku = {
+        "items": [{"index": 0, "result": "pass", "confidence": 0.50,
+                   "reasoning": "unsure"}],  # low conf -> climb to sonnet
+        "risk_factors": [{"kind": "raw_sql", "severity": "low",
+                          "description": "haiku read"}],
+    }
+    sonnet = {
+        "items": [{"index": 0, "result": "pass", "confidence": 0.96,
+                   "reasoning": "settled"}],
+        "risk_factors": [{"kind": "external_call_added", "severity": "high",
+                          "description": "sonnet read"}],
+    }
+    client = _FakeClient([_FakeMessage(json.dumps(haiku)),
+                          _FakeMessage(json.dumps(sonnet))])
+    result = verify_card(
+        card_id="bRF-05", card_body=body, worktree=tmp_path,
+        subjective_client=client,
+    )
+    assert len(client.messages.calls) == 2  # climbed
+    assert len(result.risk_factors) == 1
+    assert result.risk_factors[0].kind == "external_call_added"  # sonnet won
+    assert result.risk_factors[0].severity == SEVERITY_HIGH
+
+
+def test_later_empty_risk_list_does_not_clobber(tmp_path: Path) -> None:
+    """A stronger tier returning NO risk factors must not erase the
+    weaker tier's findings -- the `if tier_risks` guard keeps the last
+    non-empty list."""
+    body = _body_with(
+        "  - description: 'tone'\n"
+        "    type: subjective\n"
+    )
+    haiku = {
+        "items": [{"index": 0, "result": "pass", "confidence": 0.50,
+                   "reasoning": "unsure"}],
+        "risk_factors": [{"kind": "guard_removed", "severity": "medium",
+                          "description": "haiku saw it"}],
+    }
+    sonnet = {
+        "items": [{"index": 0, "result": "pass", "confidence": 0.96,
+                   "reasoning": "settled"}],
+        # no risk_factors key at all
+    }
+    client = _FakeClient([_FakeMessage(json.dumps(haiku)),
+                          _FakeMessage(json.dumps(sonnet))])
+    result = verify_card(
+        card_id="bRF-06", card_body=body, worktree=tmp_path,
+        subjective_client=client,
+    )
+    assert len(client.messages.calls) == 2
+    assert len(result.risk_factors) == 1
+    assert result.risk_factors[0].kind == "guard_removed"  # haiku preserved
+
+
 def test_missing_risk_factors_key_is_empty(tmp_path: Path) -> None:
     """A v1.3 evaluator that predates the field (no risk_factors key)
     yields an empty tuple, not an error."""
