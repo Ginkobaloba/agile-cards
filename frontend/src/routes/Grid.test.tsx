@@ -26,6 +26,11 @@ import type { RatesPayload } from "../lib/cost";
 import { restakeFromDrag } from "../lib/gridLayout";
 import { useStore } from "../state/store";
 import { useFilters } from "../state/filters";
+import {
+  DEFAULT_X_AXIS,
+  DEFAULT_Y_AXIS,
+  useGridAxes,
+} from "../state/gridAxes";
 
 // Stub the card modal so the mount tests exercise Grid's open-card wiring
 // without pulling in Radix Dialog's portal + focus machinery (which leans
@@ -90,6 +95,9 @@ beforeEach(() => {
   cleanup();
   useFilters.getState().reset();
   useStore.setState({ cards: {}, ranks: {}, hydrated: false });
+  // Axes now live in a shared store; reset so the axis-switch test does
+  // not bleed into later tests that assume the default cost/stakes axes.
+  useGridAxes.setState({ xAxis: DEFAULT_X_AXIS, yAxis: DEFAULT_Y_AXIS });
 });
 
 describe("Grid view (mounted)", () => {

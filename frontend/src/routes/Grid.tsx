@@ -26,6 +26,7 @@ import {
   STAKES_ORDER,
 } from "../lib/gridLayout";
 import { cardMatchesFilters, useFilters } from "../state/filters";
+import { useGridAxes } from "../state/gridAxes";
 import { projectKeyOf } from "../state/lens";
 import { cardTitle, cardShortId } from "../lib/parseCard";
 import { useStore } from "../state/store";
@@ -55,8 +56,12 @@ export function Grid({ rates }: Props) {
   const upsert = useStore((s) => s.upsert);
   const filters = useFilters();
 
-  const [xAxis, setXAxis] = useState<AxisKey>("cost");
-  const [yAxis, setYAxis] = useState<AxisKey>("stakes");
+  // Axes live in a store (not local state) so a saved view can capture
+  // and restore them; see state/gridAxes.ts and state/savedView.ts.
+  const xAxis = useGridAxes((s) => s.xAxis);
+  const yAxis = useGridAxes((s) => s.yAxis);
+  const setXAxis = useGridAxes((s) => s.setXAxis);
+  const setYAxis = useGridAxes((s) => s.setYAxis);
   const [openCard, setOpenCard] = useState<string | null>(null);
   const [patchError, setPatchError] = useState<string | null>(null);
 

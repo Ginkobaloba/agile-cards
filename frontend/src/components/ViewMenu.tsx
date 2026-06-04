@@ -1,12 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 
 import { api, ApiError, type SavedView } from "../lib/api";
-import {
-  EMPTY_FILTERS,
-  type FilterState,
-  filtersToParams,
-  useFilters,
-} from "../state/filters";
+import { filtersToParams, useFilters } from "../state/filters";
+import { useGridAxes } from "../state/gridAxes";
+import { useLens } from "../state/lens";
+import { bundleFromCurrent, normalizeViewPayload } from "../state/savedView";
 
 /**
  * Header-level menu for saved views. Lets the user:
@@ -33,6 +31,19 @@ export function ViewMenu() {
 
   const filters = useFilters();
   const setAll = useFilters((s) => s.setAll);
+  const groupBy = useLens((s) => s.groupBy);
+  const setGroupBy = useLens((s) => s.setGroupBy);
+  const xAxis = useGridAxes((s) => s.xAxis);
+  const yAxis = useGridAxes((s) => s.yAxis);
+  const setAxes = useGridAxes((s) => s.setAxes);
+
+  // The bundle persisted on save / applied on load: filters + the
+  // group-by lens + the grid axes. See state/savedView.ts.
+  const currentBundle = bundleFromCurrent({
+    filters,
+    groupBy,
+    grid: { xAxis, yAxis },
+  });
 
   // Lazy-load views the first time the dropdown opens.
   useEffect(() => {
@@ -73,8 +84,13 @@ export function ViewMenu() {
   const currentView = views.find((v) => v.id === currentId);
 
   const handleLoad = (view: SavedView): void => {
-    const payload = view.payload as Partial<FilterState> | null;
-    setAll({ ...EMPTY_FILTERS, ...(payload ?? {}) });
+    // The normalizer resolves both the versioned bundle and legacy
+    // bare-FilterState rows, so an old saved view loads as filters-only
+    // instead of throwing.
+    const bundle = normalizeViewPayload(view.payload);
+    setAll(bundle.filters);
+    setGroupBy(bundle.groupBy);
+    setAxes(bundle.grid.xAxis, bundle.grid.yAxis);
     setCurrentId(view.id);
     setOpen(false);
   };
@@ -83,7 +99,7 @@ export function ViewMenu() {
     const name = newName.trim();
     if (name.length === 0) return;
     try {
-      const view = await api.createView(name, filters);
+      const view = await api.createView(name, currentBundle);
       setViews((vs) => [...vs, view].sort((a, b) => a.name.localeCompare(b.name)));
       setCurrentId(view.id);
       setNewName("");
@@ -96,7 +112,7 @@ export function ViewMenu() {
   const handleUpdateCurrent = async (): Promise<void> => {
     if (currentId === null) return;
     try {
-      const updated = await api.updateView(currentId, { payload: filters });
+      const updated = await api.updateView(currentId, { payload: currentBundle });
       setViews((vs) => vs.map((v) => (v.id === updated.id ? updated : v)));
       setError(null);
     } catch (err) {
