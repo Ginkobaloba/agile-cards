@@ -984,6 +984,67 @@ class Daemon:
                 claim.card_id, exc,
             )
 
+    def _record_verifier_metrics(
+        self, claim: ClaimedCard, result: "VerifierResult | None"
+    ) -> None:
+        """Best-effort: record the verifier verdict to the ledger.
+
+        A FAIL verdict also stamps one rework cycle (idempotent on the
+        attempt). A skipped verifier (`result is None`) records nothing --
+        no verification happened. Verifier token attribution is not yet
+        surfaced by `verify_card`, so tokens are recorded as 0; the rework
+        signal is the value here (it feeds the estimator's rework rate and
+        the gate's historical floor)."""
+        writer = self._ledger_writer()
+        if writer is None or result is None:
+            return
+        try:
+            writer.record_verifier_decided(
+                card_id=claim.card_id,
+                tenant_id=self.tenant_id,
+                attempt_trace_id=claim.attempt_trace_id,
+                failed=result.overall_status == VERDICT_FAIL,
+            )
+        except Exception as exc:  # noqa: BLE001 - best-effort by contract.
+            log.warning(
+                "ledger verifier-metrics write failed for %s: %s",
+                claim.card_id, exc,
+            )
+
+    def _record_merge_gate_metrics(
+        self, claim: ClaimedCard, outcome: "MergeOutcome"
+    ) -> None:
+        """Best-effort: record the merge-gate decision (and PR-open, when
+        a PR was opened) to the ledger. A skipped/no-op gate records
+        nothing.
+
+        Note: with `pr_gate_enabled=False` (the default) the gate degrades
+        to `skipped=True`, so `merge_gate` stays null for cards that still
+        land in `done` under chunk-3 auto-merge. That is by design here --
+        the gate did not actually route a PR. When the PR gate is wired,
+        the real `auto`/`sibling_review`/`human_review` decision is
+        captured."""
+        writer = self._ledger_writer()
+        if writer is None or outcome.skipped:
+            return
+        try:
+            writer.record_merge_gate(
+                card_id=claim.card_id,
+                tenant_id=self.tenant_id,
+                gate=outcome.decision,
+            )
+            if outcome.pr_url:
+                writer.record_pr_opened(
+                    card_id=claim.card_id,
+                    tenant_id=self.tenant_id,
+                    pr_opened_at=now_utc_iso(),
+                )
+        except Exception as exc:  # noqa: BLE001 - best-effort by contract.
+            log.warning(
+                "ledger merge-gate-metrics write failed for %s: %s",
+                claim.card_id, exc,
+            )
+
     def _emit_escalated_events(
         self, claim: ClaimedCard, cascade_history: Any
     ) -> None:
@@ -1261,6 +1322,8 @@ class Daemon:
             self._verifier_route_error(claim, last_error)
             return
 
+        self._record_verifier_metrics(claim, result)
+
         if result.overall_status == VERDICT_PASS:
             self._verifier_apply_pass(claim, result=result, skip_reason=None)
         elif result.overall_status == VERDICT_FAIL:
@@ -1407,6 +1470,7 @@ class Daemon:
         outcome = self._merge_gate.apply(
             claim, record, verified_at=now, project_config=self.project_config
         )
+        self._record_merge_gate_metrics(claim, outcome)
         self._apply_merge_outcome(
             claim,
             outcome,
