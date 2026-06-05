@@ -485,6 +485,10 @@ class Daemon:
             for o in outcomes:
                 if o.action == "reviewed":
                     summary["sibling_reviews"] += 1
+                    self._record_reviewer_spend(
+                        o.card_id, call_id=f"sibling:{o.card_id}",
+                        tokens=o.reviewer_tokens,
+                    )
         except Exception:  # noqa: BLE001
             log.exception("sibling reviewer sweep failed; continuing")
 
@@ -505,6 +509,10 @@ class Daemon:
             for o in amend_outcomes:
                 if o.action.startswith("reviewed_"):
                     summary["amendment_reviews"] += 1
+                    self._record_reviewer_spend(
+                        o.card_id, call_id=f"amendment:{o.card_id}",
+                        tokens=o.reviewer_tokens,
+                    )
         except Exception:  # noqa: BLE001
             log.exception("amendment reviewer sweep failed; continuing")
 
@@ -1071,6 +1079,31 @@ class Daemon:
             log.warning(
                 "ledger merge-gate-metrics write failed for %s: %s",
                 claim.card_id, exc,
+            )
+
+    def _record_reviewer_spend(
+        self, card_id: str, *, call_id: str, tokens: int
+    ) -> None:
+        """Best-effort: record reviewer/editor token spend to the ledger.
+
+        `call_id` is deduped by the writer; it is card-scoped per reviewer
+        kind (`sibling:<id>` / `amendment:<id>`). A card is reviewed once
+        per lifecycle (marker-gated), so this is correct for the common
+        case; a re-review after a rework cycle last-wins rather than sums
+        (a documented minor limitation -- reviewer_tokens_total is not yet
+        consumed by the estimator)."""
+        writer = self._ledger_writer()
+        if writer is None or tokens <= 0:
+            return
+        try:
+            writer.record_reviewer_spend(
+                card_id=card_id, tenant_id=self.tenant_id,
+                call_id=call_id, tokens=tokens,
+            )
+        except Exception as exc:  # noqa: BLE001 - best-effort by contract.
+            log.warning(
+                "ledger reviewer-spend write failed for %s: %s",
+                card_id, exc,
             )
 
     def _record_contract_outcome(self, card_id: str, *, survived: bool) -> None:
