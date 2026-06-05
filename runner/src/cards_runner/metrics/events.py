@@ -49,6 +49,10 @@ KIND_PR_OPENED: str = "pr_opened"
 KIND_PR_MERGED: str = "pr_merged"
 KIND_REGRESSION_FLAGGED: str = "regression_flagged"
 KIND_CONTRACT_OUTCOME: str = "contract_outcome"
+# Gate chunk 2b: the confidence gate's shadow-mode decision. Recorded to
+# the log for later calibration (gate-3); the card_metrics fold ignores
+# it (no gate columns in the chunk-1 schema).
+KIND_GATE_SHADOW_DECISION: str = "gate_shadow_decision"
 
 ALL_KINDS: tuple[str, ...] = (
     KIND_CARD_CREATED,
@@ -61,6 +65,7 @@ ALL_KINDS: tuple[str, ...] = (
     KIND_PR_MERGED,
     KIND_REGRESSION_FLAGGED,
     KIND_CONTRACT_OUTCOME,
+    KIND_GATE_SHADOW_DECISION,
 )
 
 
@@ -169,6 +174,7 @@ __all__ = [
     "KIND_CARD_STARTED",
     "KIND_CONTRACT_OUTCOME",
     "KIND_EXECUTOR_EXITED",
+    "KIND_GATE_SHADOW_DECISION",
     "KIND_PR_MERGED",
     "KIND_PR_OPENED",
     "KIND_REGRESSION_FLAGGED",

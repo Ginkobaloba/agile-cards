@@ -81,6 +81,12 @@ from .amendment_editor_client import (
     AnthropicAmendmentEditorClient,
 )
 from .amendment_reviewer import run_amendment_reviews
+from .confidence_gate import (
+    ConfidenceGate,
+    build_gate_inputs,
+    read_bucket_history,
+)
+from .diff_stats import DiffStats
 from .orphan import reclaim, scan_for_orphans
 from .pr_lifecycle import GhRunner
 from .reaper import reap_forensic_run_dirs
@@ -174,6 +180,11 @@ class Daemon:
         # store connection, which `_boot` opens), and only when
         # `cfg.ledger_enabled`. None means metrics recording is off.
         self._ledger: LedgerWriter | None = None
+        # Gate chunk 2b: the confidence gate runs in SHADOW mode -- it
+        # records what it would decide without changing routing. Default
+        # config is shadow; nothing here flips merge routing (that is the
+        # held Tier-3 gate-4 change).
+        self._confidence_gate = ConfidenceGate()
 
     @property
     def project_config(self) -> ProjectConfig:
@@ -1081,6 +1092,57 @@ class Daemon:
                 claim.card_id, exc,
             )
 
+    def _record_gate_shadow(self, claim: ClaimedCard, record: Any,
+                            result: "VerifierResult") -> None:
+        """Best-effort: run the confidence gate in SHADOW mode and record
+        the decision to the event log. Changes no routing -- the chunk-4
+        tier gate still decides. Builds the diff with `--no-renames` so a
+        sensitive-path escalator can't be dodged by a rename. Wholly
+        guarded; a gate/git/ledger failure never disturbs verification."""
+        writer = self._ledger_writer()
+        if writer is None:
+            return
+        try:
+            branch = str(record.field_value("branch") or "")
+            base = str(record.field_value("base_branch")
+                       or self.cfg.pr_base_branch_default)
+            diff = DiffStats.from_worktree(
+                claim.worktree_path, branch=branch, base_branch=base,
+                git_path=self.cfg.git_path,
+            ) if branch else DiffStats()
+            rework = 0
+            history = None
+            if record.work_type is not None and record.points is not None:
+                store = MetricsStore.from_repository(self.repo)
+                existing = store.get_card_metrics(
+                    tenant_id=self.tenant_id, card_id=claim.card_id)
+                if existing is not None and existing.rework_cycles is not None:
+                    rework = existing.rework_cycles
+                history = read_bucket_history(
+                    store, tenant_id=self.tenant_id,
+                    work_type=record.work_type, tier=record.points,
+                    config=self._confidence_gate.config,
+                )
+            inputs = build_gate_inputs(
+                record=record, verifier_result=result, diff_stats=diff,
+                config=self._confidence_gate.config, rework_cycles=rework,
+            )
+            decision = self._confidence_gate.decide(inputs, history)
+            writer.record_gate_shadow_decision(
+                card_id=claim.card_id, tenant_id=self.tenant_id,
+                outcome=decision.outcome,
+                confidence_score=decision.confidence_score,
+                raw_score=decision.raw_score,
+                escalators=decision.escalators,
+                reason=decision.reason, at=decision.at,
+                inputs=decision.inputs,
+            )
+        except Exception as exc:  # noqa: BLE001 - best-effort by contract.
+            log.warning(
+                "confidence-gate shadow recording failed for %s: %s",
+                claim.card_id, exc,
+            )
+
     def _record_reviewer_spend(
         self, card_id: str, *, call_id: str, tokens: int
     ) -> None:
@@ -1436,6 +1498,9 @@ class Daemon:
         self._record_verifier_metrics(claim, result)
 
         if result.overall_status == VERDICT_PASS:
+            # Confidence gate runs in shadow only on verifier-passed cards
+            # (spec 4.5). Records what it would decide; changes no routing.
+            self._record_gate_shadow(claim, record, result)
             self._verifier_apply_pass(claim, result=result, skip_reason=None)
         elif result.overall_status == VERDICT_FAIL:
             self._verifier_apply_fail(claim, result)

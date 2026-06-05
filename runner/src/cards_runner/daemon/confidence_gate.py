@@ -274,6 +274,89 @@ class ConfidenceGate:
         }
 
 
+_TIER_RANK: dict[str, int] = {"haiku": 1, "sonnet": 2, "opus": 3}
+_RANK_TIER: dict[int, str] = {1: "haiku", 2: "sonnet", 3: "opus"}
+
+
+def _is_test_path(path: str) -> bool:
+    p = path.lower()
+    base = p.rsplit("/", 1)[-1]
+    return (
+        "/tests/" in p or p.startswith("tests/")
+        or base.startswith("test_") or base.endswith("_test.py")
+        or ".test." in base or ".spec." in base
+    )
+
+
+def build_gate_inputs(
+    *,
+    record: Any,
+    verifier_result: Any,
+    diff_stats: Any,
+    config: ConfidenceGateConfig | None = None,
+    rework_cycles: int = 0,
+    sibling_decision: str | None = None,
+) -> GateInputs:
+    """Extract `GateInputs` from a verifier result + the worktree diff.
+
+    Pure and side-effect-free (the daemon supplies the already-built
+    `verifier_result` and `diff_stats`). Signals not yet available from
+    `verify_card` (expected-files scope -> gate-5; verifier incomplete
+    metrics; change-request-unresolved) default to their neutral value."""
+    cfg = config or ConfidenceGateConfig()
+    items = tuple(getattr(verifier_result, "items", ()) or ())
+    det = [it for it in items if getattr(it, "phase", "") == "deterministic"]
+    all_det_first = bool(det) and all(
+        it.handler_result.passed for it in det
+    )
+
+    appendix = tuple(getattr(verifier_result, "cascade_history_appendix", ()) or ())
+    cleared_tier: str | None = None
+    confidences: list[float] = []
+    max_rank = 0
+    if appendix:
+        for entry in appendix:
+            rank = _TIER_RANK.get(str(entry.get("tier_attempted", "")), 0)
+            max_rank = max(max_rank, rank)
+            if entry.get("confidence") is not None:
+                confidences.append(float(entry["confidence"]))
+        cleared_tier = _RANK_TIER.get(max_rank)
+    # cascade_climbs = tiers reached BEYOND the haiku start, NOT the raw
+    # appendix length (which has one row per item x tier, so a clean
+    # multi-item haiku pass would falsely look like many climbs). Assumes
+    # the standard haiku start (rank 1); a card that never left haiku has
+    # zero climbs.
+    cascade_climbs = max(0, max_rank - 1) if max_rank else 0
+    # No subjective phase -> neutral 0.85 (the formula's pivot, which
+    # contributes no bonus), not 1.0 (which would grant a free +0.05 for
+    # confidence the card never expressed).
+    verifier_conf = min(confidences) if confidences else 0.85
+
+    pin = record.field_value("pin_required")
+    files = tuple(getattr(diff_stats, "files", ()) or ())
+    diff_is_test_only = bool(files) and all(_is_test_path(f) for f in files)
+
+    return GateInputs(
+        work_type=record.work_type,
+        tier=record.points,
+        pin_required=bool(pin) if pin is not None else False,
+        all_deterministic_first_try=all_det_first,
+        subjective_cleared_tier=cleared_tier,
+        cascade_climbs=cascade_climbs,
+        rework_cycles=rework_cycles,
+        verifier_confidence=verifier_conf,
+        sibling_decision=sibling_decision,
+        diff_total_lines=diff_stats.total_lines,
+        diff_is_test_only=diff_is_test_only,
+        sensitive_path_touched=diff_stats.any_path_matches(cfg.sensitive_paths),
+        schema_migration_in_diff=diff_stats.any_path_matches(
+            cfg.schema_migration_globs),
+        new_external_dependency=diff_stats.any_path_matches(
+            cfg.dependency_manifests),
+        risk_factors=tuple(getattr(verifier_result, "risk_factors", ()) or ()),
+    )
+
+
 def read_bucket_history(
     store: Any,
     *,
@@ -308,5 +391,6 @@ __all__ = [
     "OUTCOME_AUTO",
     "OUTCOME_HUMAN",
     "OUTCOME_SIBLING",
+    "build_gate_inputs",
     "read_bucket_history",
 ]
