@@ -53,6 +53,11 @@ def test_glob_matching() -> None:
     # `**/` matches zero leading segments too.
     assert matches_any_glob("a/b", ("a/**/b",))
     assert matches_any_glob("a/x/y/b", ("a/**/b",))
+    # A single `*` must NOT cross a `/` (security-relevant: a sensitive
+    # glob can't be dodged by burying the path a directory deeper).
+    assert matches_any_glob("x.py", ("*.py",))
+    assert not matches_any_glob("sub/x.py", ("*.py",))
+    assert not matches_any_glob("src/auth_helpers/x.py", ("src/auth/**",))
 
 
 def test_diffstats_any_path_matches() -> None:
