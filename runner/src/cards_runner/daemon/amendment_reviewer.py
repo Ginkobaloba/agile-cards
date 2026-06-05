@@ -91,6 +91,9 @@ class AmendmentOutcome:
     action: AmendmentAction
     decision: str | None = None
     reason: str = ""
+    # Ledger chunk 2: reviewer + editor token spend this sweep, for the
+    # daemon to record on the card_metrics row. 0 when no SDK call ran.
+    reviewer_tokens: int = 0
 
 
 def run_amendment_reviews(
@@ -194,6 +197,14 @@ def _process_card(
         card_total_after_review = attribute_to_card(
             repo, record, decision.usage, tenant_id=tenant_id,
         )
+    # Ledger chunk 2: the reviewer call's token spend, surfaced on the
+    # outcome for the daemon to record. The auto-edit editor call (when
+    # it fires) attributes its own tokens to the card separately; those
+    # are not yet summed into this ledger figure (a documented follow-up,
+    # like the verifier-token gap).
+    reviewer_tokens = (
+        decision.usage.total_tokens if decision.usage is not None else 0
+    )
 
     marker: dict[str, Any] = {
         "card_id": record.card_id,
@@ -238,6 +249,7 @@ def _process_card(
                         "amendment approved + auto-edited; "
                         "routed back to backlog"
                     ),
+                    reviewer_tokens=reviewer_tokens,
                 )
             # Fell through to the human-finalize path; route as the
             # chunk 5 approve-without-edit case.
@@ -256,6 +268,7 @@ def _process_card(
                     "amendment approved; auto-edit declined "
                     f"({edit_outcome.fallback_reason}); routed to blocked"
                 ),
+                reviewer_tokens=reviewer_tokens,
             )
         _write_marker(marker_path, marker)
         _emit_event(repo, record, decision, marker, tenant_id=tenant_id)
@@ -274,6 +287,7 @@ def _process_card(
             action="reviewed_approve",
             decision="approve",
             reason="amendment approved; routed to blocked for AC edit",
+            reviewer_tokens=reviewer_tokens,
         )
 
     _write_marker(marker_path, marker)
@@ -303,12 +317,14 @@ def _process_card(
             action="reviewed_deny",
             decision="request_changes",
             reason="amendment denied; routed back to active",
+            reviewer_tokens=reviewer_tokens,
         )
     return AmendmentOutcome(
         card_id=record.card_id,
         action="reviewed_comment",
         decision="comment",
         reason="reviewer offered comment only; card stays in amendments",
+        reviewer_tokens=reviewer_tokens,
     )
 
 

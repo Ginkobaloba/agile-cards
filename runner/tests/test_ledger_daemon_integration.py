@@ -223,6 +223,35 @@ def test_pr_merged_metrics_records_diff_and_wall(
     assert row.human_review_wall_seconds > 0
 
 
+def test_reviewer_spend_sums_across_kinds(
+    repo: SqliteRepository, paths: RuntimePaths, store_spec: str,
+    todo_root: Path, card_factory: Any,
+) -> None:
+    """Sibling + amendment reviewer spend both land on the row and sum;
+    re-recording the same call_id is idempotent (last-wins, not double)."""
+    card_id = "bLED-08"
+    card_factory(card_id)
+    repo.update_card_fields(card_id, {"work_type": "feature"})
+    claim = _claim_and_project(repo, paths, card_id,
+                               finished_at="2026-06-03T00:10:00Z", tokens=100)
+    daemon = Daemon(_cfg(todo_root, store_spec, ledger_enabled=True), repo=repo)
+    daemon._post_worker_exit(_handle(claim), EXIT_CLEAN)
+    daemon._record_reviewer_spend(card_id, call_id=f"sibling:{card_id}",
+                                  tokens=200)
+    daemon._record_reviewer_spend(card_id, call_id=f"amendment:{card_id}",
+                                  tokens=80)
+    daemon._record_reviewer_spend(card_id, call_id=f"sibling:{card_id}",
+                                  tokens=200)  # replay, must not double
+    store = MetricsStore.from_repository(repo)
+    row = store.get_card_metrics(tenant_id="default", card_id=card_id)
+    assert row is not None
+    assert row.reviewer_tokens_total == 280  # 200 + 80
+    # Zero tokens is a no-op (no spend to record).
+    daemon._record_reviewer_spend(card_id, call_id="sibling:other", tokens=0)
+    row = store.get_card_metrics(tenant_id="default", card_id=card_id)
+    assert row.reviewer_tokens_total == 280
+
+
 def test_regression_links_append_to_parent(
     repo: SqliteRepository, paths: RuntimePaths, store_spec: str,
     todo_root: Path,

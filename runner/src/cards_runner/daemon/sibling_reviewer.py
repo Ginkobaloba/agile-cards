@@ -240,6 +240,9 @@ class ReviewOutcome:
                   # "skipped_no_pr", "skipped_gh", "skipped_cost_cap"
     decision: Decision | None = None
     reason: str = ""
+    # Ledger chunk 2: reviewer token spend this sweep, for the daemon to
+    # record on the card_metrics row. 0 when no SDK call was made.
+    reviewer_tokens: int = 0
 
 
 def run_sibling_reviews(
@@ -425,6 +428,9 @@ def _process_card(
         action="reviewed",
         decision=decision.decision,
         reason="decision posted and marker written",
+        reviewer_tokens=(
+            decision.usage.total_tokens if decision.usage is not None else 0
+        ),
     )
 
 
