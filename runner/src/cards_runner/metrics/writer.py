@@ -390,6 +390,40 @@ class LedgerWriter:
             payload={"contract_survived": survived},
         ))
 
+    def record_gate_shadow_decision(
+        self,
+        *,
+        card_id: str,
+        tenant_id: str,
+        outcome: str,
+        confidence_score: float,
+        raw_score: float | None,
+        escalators: tuple[str, ...],
+        reason: str,
+        at: str,
+        inputs: dict[str, Any],
+    ) -> bool:
+        """Append a confidence-gate shadow decision to the event log.
+
+        Append-only: there are no gate columns on `card_metrics` (chunk-1
+        schema), so this does NOT rebuild the row -- the fold ignores the
+        kind. The log is what the calibration read (gate-3) consumes. The
+        dedup_key carries the decision timestamp so re-evaluations across
+        attempts are all retained."""
+        return ev.append_event(self._paths, ev.MetricsEvent(
+            at=at, card_id=card_id, tenant_id=tenant_id,
+            kind=ev.KIND_GATE_SHADOW_DECISION,
+            dedup_key=f"shadow:{card_id}:{at}",
+            payload={
+                "outcome": outcome,
+                "confidence_score": confidence_score,
+                "raw_score": raw_score,
+                "escalators": list(escalators),
+                "reason": reason,
+                "inputs": inputs,
+            },
+        ))
+
     # ---- rebuild -----------------------------------------------------
 
     def rebuild_card(self, *, card_id: str, tenant_id: str) -> bool:

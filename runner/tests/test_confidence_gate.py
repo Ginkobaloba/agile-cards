@@ -18,6 +18,7 @@ from cards_runner.daemon.confidence_gate import (
     ConfidenceGate,
     ConfidenceGateConfig,
     GateInputs,
+    build_gate_inputs,
     read_bucket_history,
 )
 from cards_runner.daemon.diff_stats import DiffStats, matches_any_glob
@@ -213,6 +214,64 @@ def test_historical_floor_compresses_score() -> None:
 def test_is_live_shadow_default() -> None:
     assert ConfidenceGate().is_live() is False
     assert ConfidenceGate(ConfidenceGateConfig(mode="live")).is_live() is True
+
+
+# ---- build_gate_inputs (signal extraction) ---------------------------
+
+
+def test_build_gate_inputs_extracts_signals() -> None:
+    from cards_runner.store.models import CardRecord
+    from cards_runner.verifier import HandlerResult
+    from cards_runner.verifier.runner import ItemResult, VerifierResult
+
+    record = CardRecord(
+        card_id="c", tenant_id="default", status="active",
+        work_type="feature", points=3,
+        frontmatter_extra={"pin_required": False},
+    )
+    vr = VerifierResult(
+        overall_status="pass",
+        items=(ItemResult(item={}, handler_result=HandlerResult(True, {}),
+                          phase="deterministic", item_idx=0),),
+        cascade_history_appendix=(
+            {"tier_attempted": "haiku", "confidence": 0.92,
+             "result": "pass", "item_idx": 1},
+        ),
+        risk_factors=(RiskFactor(kind="raw_sql", severity="medium",
+                                 description="x"),),
+    )
+    diff = DiffStats(files=("src/auth/x.py", "tests/test_x.py"),
+                     lines_added=50, lines_removed=10)
+    inp = build_gate_inputs(record=record, verifier_result=vr, diff_stats=diff)
+    assert inp.work_type == "feature" and inp.tier == 3
+    assert inp.all_deterministic_first_try is True
+    assert inp.subjective_cleared_tier == "haiku"
+    assert inp.cascade_climbs == 1
+    assert inp.verifier_confidence == pytest.approx(0.92)
+    assert inp.diff_total_lines == 60
+    assert inp.diff_is_test_only is False     # src/auth/x.py is not a test
+    assert inp.sensitive_path_touched is True  # matches src/auth/**
+    assert len(inp.risk_factors) == 1
+
+
+def test_build_gate_inputs_deterministic_only_no_subjective() -> None:
+    from cards_runner.store.models import CardRecord
+    from cards_runner.verifier import HandlerResult
+    from cards_runner.verifier.runner import ItemResult, VerifierResult
+
+    record = CardRecord(card_id="c", tenant_id="default", status="active",
+                        work_type="docs", points=1)
+    vr = VerifierResult(
+        overall_status="pass",
+        items=(ItemResult(item={}, handler_result=HandlerResult(True, {}),
+                          phase="deterministic", item_idx=0),),
+    )
+    inp = build_gate_inputs(record=record, verifier_result=vr,
+                            diff_stats=DiffStats())
+    assert inp.subjective_cleared_tier is None
+    assert inp.cascade_climbs == 0
+    assert inp.verifier_confidence == 1.0  # no subjective -> full confidence
+    assert inp.pin_required is False
 
 
 # ---- bucket-history reader -------------------------------------------

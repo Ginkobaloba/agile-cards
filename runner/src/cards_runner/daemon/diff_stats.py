@@ -119,8 +119,11 @@ class DiffStats:
         inputs (the caller logs the failure)."""
         try:
             result = subprocess.run(
+                # --no-renames so a rename can't dodge a sensitive-path
+                # escalator (a renamed file shows as add+delete of real
+                # paths rather than an `old => new` entry).
                 [git_path, "-C", str(worktree), "diff", "--numstat",
-                 f"{base_branch}...{branch}"],
+                 "--no-renames", f"{base_branch}...{branch}"],
                 capture_output=True, text=True, timeout=30, check=False,
             )
         except (OSError, subprocess.SubprocessError):

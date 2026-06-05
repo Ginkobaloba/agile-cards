@@ -334,6 +334,56 @@ def test_verifier_and_gate_helpers_noop_when_disabled(
     assert not ev.events_path(paths).exists()
 
 
+def test_gate_shadow_decision_recorded(
+    repo: SqliteRepository, paths: RuntimePaths, store_spec: str,
+    todo_root: Path, card_factory: Any,
+) -> None:
+    """The confidence gate records a shadow decision to the event log on
+    a verifier-passed card, without any routing change. (Driven via the
+    daemon helper; the gate-apply path needs full verifier+gh wiring.)"""
+    from cards_runner.verifier.runner import VerifierResult
+
+    card_id = "bLED-09"
+    card_factory(card_id)
+    repo.update_card_fields(card_id, {"work_type": "feature"})
+    claim = _claim_and_project(repo, paths, card_id,
+                               finished_at="2026-06-03T00:10:00Z", tokens=100)
+    daemon = Daemon(_cfg(todo_root, store_spec, ledger_enabled=True), repo=repo)
+    daemon._post_worker_exit(_handle(claim), EXIT_CLEAN)
+    record = repo.get_card(card_id)
+    daemon._record_gate_shadow(
+        claim, record, VerifierResult(overall_status="pass", items=())
+    )
+    logged = ev.read_events_for_card(paths, card_id=card_id, tenant_id="default")
+    shadow = [e for e in logged if e.kind == ev.KIND_GATE_SHADOW_DECISION]
+    assert len(shadow) == 1
+    assert shadow[0].payload["outcome"] in (
+        "auto", "sibling_review", "human_review")
+    # Shadow only: it did NOT write a merge_gate value or change the row's
+    # routing-bearing fields.
+    store = MetricsStore.from_repository(repo)
+    row = store.get_card_metrics(tenant_id="default", card_id=card_id)
+    assert row is not None  # the executor-exit row exists
+    assert row.merge_gate is None  # shadow gate records no merge_gate
+
+
+def test_gate_shadow_noop_when_ledger_disabled(
+    repo: SqliteRepository, paths: RuntimePaths, store_spec: str,
+    todo_root: Path, card_factory: Any,
+) -> None:
+    from cards_runner.verifier.runner import VerifierResult
+
+    card_id = "bLED-10"
+    card_factory(card_id)
+    claim = _claim_and_project(repo, paths, card_id)
+    daemon = Daemon(_cfg(todo_root, store_spec, ledger_enabled=False), repo=repo)
+    daemon._record_gate_shadow(
+        claim, repo.get_card(card_id),
+        VerifierResult(overall_status="pass", items=()),
+    )
+    assert not ev.events_path(paths).exists()
+
+
 def test_exit_hook_is_noop_when_disabled(
     repo: SqliteRepository, paths: RuntimePaths, store_spec: str,
     todo_root: Path, card_factory: Any,
