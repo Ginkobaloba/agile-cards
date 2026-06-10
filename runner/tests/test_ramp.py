@@ -242,19 +242,73 @@ def test_count_live_decisions_filters_bucket(paths: RuntimePaths) -> None:
     ) == 2
 
 
+def test_count_live_decisions_dedups_replayed_appends(
+    paths: RuntimePaths,
+) -> None:
+    """The log tolerates duplicate appends; a crash-replayed event must
+    not inflate live_n toward an advancement gate."""
+    event = ev.MetricsEvent(
+        at="2026-06-09T10:00:00Z", card_id="c1", tenant_id="default",
+        kind=ev.KIND_GATE_LIVE_DECISION, dedup_key="live:c1",
+        payload={"inputs": {"work_type": "feature", "tier": 3}},
+    )
+    ev.append_event(paths, event)
+    ev.append_event(paths, event)
+    assert count_live_decisions(
+        paths, tenant_id="default", work_type="feature", tier=3
+    ) == 1
+
+
+def test_phase2_fails_when_auto_band_is_empty() -> None:
+    """The 5% ceiling targets the AUTO band; a populated mid band is
+    not evidence. No samples in the top band means the check fails."""
+    cal = calibrate(
+        _decisions([("a", 0.55)]), frozenset(),
+        work_type="feature", tier=3,
+    )
+    rec = evaluate_advance(_state(2), cal, shadow_n=500, live_n=100)
+    failed = {c.name: c.detail for c in rec.checks if not c.passed}
+    assert "top_band_regression" in failed
+    assert "no samples" in failed["top_band_regression"]
+
+
+def _ks_event(kind: str, dedup: str, at: str) -> ev.MetricsEvent:
+    return ev.MetricsEvent(
+        at=at, card_id="bucket:feature:3", tenant_id="default",
+        kind=kind, dedup_key=dedup, payload={},
+    )
+
+
 def test_killswitch_quiet_until_untripped_event(
     paths: RuntimePaths,
 ) -> None:
     assert killswitch_quiet(paths, tenant_id="default") is True
-    ev.append_event(paths, ev.MetricsEvent(
-        at="2026-06-09T10:00:00Z", card_id="bucket:feature:3",
-        tenant_id="default", kind=ev.KIND_GATE_KILLSWITCH_TRIPPED,
-        dedup_key="ks:1", payload={},
+    ev.append_event(paths, _ks_event(
+        ev.KIND_GATE_KILLSWITCH_TRIPPED, "ks:1", "2026-06-09T10:00:00Z"
     ))
     assert killswitch_quiet(paths, tenant_id="default") is False
-    ev.append_event(paths, ev.MetricsEvent(
-        at="2026-06-09T11:00:00Z", card_id="bucket:feature:3",
-        tenant_id="default", kind=ev.KIND_GATE_KILLSWITCH_CLEARED,
-        dedup_key="ks:2", payload={},
+    ev.append_event(paths, _ks_event(
+        ev.KIND_GATE_KILLSWITCH_CLEARED, "ks:2", "2026-06-09T11:00:00Z"
     ))
     assert killswitch_quiet(paths, tenant_id="default") is True
+
+
+def test_killswitch_replayed_clear_cannot_absorb_a_real_trip(
+    paths: RuntimePaths,
+) -> None:
+    """Counting trips vs clears would let a crash-replayed duplicate
+    `cleared` bank a surplus that hides the NEXT real trip. Last-event-
+    wins must report tripped after trip, clear, clear(dup), trip."""
+    ev.append_event(paths, _ks_event(
+        ev.KIND_GATE_KILLSWITCH_TRIPPED, "ks:1", "2026-06-09T10:00:00Z"
+    ))
+    ev.append_event(paths, _ks_event(
+        ev.KIND_GATE_KILLSWITCH_CLEARED, "ks:2", "2026-06-09T11:00:00Z"
+    ))
+    ev.append_event(paths, _ks_event(  # replayed duplicate
+        ev.KIND_GATE_KILLSWITCH_CLEARED, "ks:2", "2026-06-09T11:00:00Z"
+    ))
+    ev.append_event(paths, _ks_event(
+        ev.KIND_GATE_KILLSWITCH_TRIPPED, "ks:3", "2026-06-09T12:00:00Z"
+    ))
+    assert killswitch_quiet(paths, tenant_id="default") is False

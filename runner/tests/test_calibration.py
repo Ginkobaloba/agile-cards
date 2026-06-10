@@ -162,6 +162,32 @@ def test_window_keeps_most_recent_cards_by_timestamp() -> None:
     assert all(b.n == 0 for b in cal.bands[1:])
 
 
+def test_boundary_exact_scores_land_in_their_own_band() -> None:
+    """0.3 / 0.1 is 2.999... in binary floating point; without the
+    banding epsilon a boundary-exact score drops one band too low.
+    At 20 bands the misbanded set includes 0.95, the auto threshold."""
+    cal = calibrate(_decisions(("c1", 0.3)), frozenset())
+    by_range = {(b.lo, b.hi): b.n for b in cal.bands}
+    assert by_range[(0.3, 0.4)] == 1
+    assert by_range[(0.2, 0.3)] == 0
+
+    cal20 = calibrate(_decisions(("c1", 0.95)), frozenset(), n_bands=20)
+    top = cal20.bands[0]
+    assert (top.lo, top.hi) == (0.95, 1.0)
+    assert top.n == 1
+
+
+def test_calibrate_rejects_nonpositive_window_and_bands() -> None:
+    import pytest
+
+    with pytest.raises(ValueError):
+        calibrate(_decisions(("c1", 0.5)), frozenset(), window_cards=0)
+    with pytest.raises(ValueError):
+        calibrate(_decisions(("c1", 0.5)), frozenset(), window_cards=-3)
+    with pytest.raises(ValueError):
+        calibrate(_decisions(("c1", 0.5)), frozenset(), n_bands=0)
+
+
 def test_rework_reevaluation_uses_last_decision() -> None:
     events = [
         _shadow_event(card_id="c1", score=0.2, at="2026-06-08T00:00:00Z"),

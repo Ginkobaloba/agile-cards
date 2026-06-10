@@ -174,6 +174,10 @@ def calibrate(
     spec's rolling window without needing wall-clock access."""
     if n_bands < 1:
         raise ValueError(f"n_bands must be >= 1, got {n_bands}")
+    if window_cards is not None and window_cards < 1:
+        raise ValueError(
+            f"window_cards must be >= 1 or None, got {window_cards}"
+        )
     latest = latest_per_card(decisions)
     latest.sort(key=lambda d: d.at)
     if window_cards is not None and len(latest) > window_cards:
@@ -183,7 +187,11 @@ def calibrate(
     counts = [0] * n_bands
     regressions = [0] * n_bands
     for d in latest:
-        idx = min(int(d.confidence_score / width), n_bands - 1)
+        # The epsilon keeps boundary-exact scores in their own band:
+        # 0.3 / 0.1 is 2.999... in binary floating point, which would
+        # drop a score sitting exactly on a band edge (including 0.95
+        # at 20 bands -- the auto threshold) one band too low.
+        idx = min(int(d.confidence_score * n_bands + 1e-9), n_bands - 1)
         counts[idx] += 1
         if d.card_id in regressed_card_ids:
             regressions[idx] += 1

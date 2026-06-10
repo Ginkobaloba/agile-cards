@@ -585,14 +585,18 @@ def _cmd_stats_calibration(args: argparse.Namespace) -> int:
             buckets = [(args.work_type, args.tier)]
         else:
             buckets = buckets_in_shadow_log(paths, tenant_id=args.tenant)
-        calibrations = [
-            calibration_for_bucket(
-                store, paths,
-                tenant_id=args.tenant, work_type=wt, tier=t,
-                n_bands=args.bands, window_cards=args.window,
-            )
-            for wt, t in buckets
-        ]
+        try:
+            calibrations = [
+                calibration_for_bucket(
+                    store, paths,
+                    tenant_id=args.tenant, work_type=wt, tier=t,
+                    n_bands=args.bands, window_cards=args.window,
+                )
+                for wt, t in buckets
+            ]
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
     finally:
         repo.close()
 

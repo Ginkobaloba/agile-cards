@@ -91,6 +91,25 @@ def test_calibration_table_and_json(
     assert payload["buckets"][0]["monotonic"] is True
 
 
+def test_calibration_rejects_nonpositive_knobs(
+    todo_root: Path, paths: RuntimePaths, store_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    _seed_shadow(paths, 1)
+    rc = main([
+        "stats", "calibration", "--bands", "0",
+        *_common(todo_root, store_path),
+    ])
+    assert rc == 2
+    assert "n_bands" in capsys.readouterr().err
+    rc = main([
+        "stats", "calibration", "--window", "0",
+        *_common(todo_root, store_path),
+    ])
+    assert rc == 2
+    assert "window_cards" in capsys.readouterr().err
+
+
 # ---- stats ramp -----------------------------------------------------
 
 

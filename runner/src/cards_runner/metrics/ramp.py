@@ -204,10 +204,14 @@ class RampStore:
 def count_live_decisions(
     paths: RuntimePaths, *, tenant_id: str, work_type: str, tier: int
 ) -> int:
-    """Count `gate_live_decision` events for one bucket. Zero until
-    chunk 4 wires live mode; counting the kind now keeps the 2->3 and
-    3->4 gates honest instead of special-cased."""
-    n = 0
+    """Count distinct `gate_live_decision` events for one bucket. Zero
+    until chunk 4 wires live mode; counting the kind now keeps the
+    2->3 and 3->4 gates honest instead of special-cased.
+
+    Distinct by `dedup_key`, per the event log's duplicate-tolerance
+    contract: a crash-replayed append must not inflate `live_n` toward
+    an advancement gate."""
+    keys: set[str] = set()
     for event in ev.read_events(paths):
         if event.kind != ev.KIND_GATE_LIVE_DECISION:
             continue
@@ -215,27 +219,35 @@ def count_live_decisions(
             continue
         inputs = (event.payload.get("inputs") or {})
         if inputs.get("work_type") == work_type and inputs.get("tier") == tier:
-            n += 1
-    return n
+            keys.add(event.dedup_key)
+    return len(keys)
 
 
 def killswitch_quiet(
     paths: RuntimePaths, *, tenant_id: str
 ) -> bool:
-    """True when no `gate_killswitch_tripped` event exists that is not
-    followed by a clear. Chunk 4 emits these; until then the log has
-    none and the check passes. The 14-day window refinement needs the
-    live-mode event volume to matter and lands with chunk 4."""
-    tripped = 0
-    cleared = 0
+    """True when the tenant's most recent kill-switch event (if any) is
+    a clear. Chunk 4 emits these; until then the log has none and the
+    check passes.
+
+    Last-event-wins over file order rather than count comparison: the
+    log tolerates duplicate appends, and counting would let a replayed
+    duplicate `cleared` bank a surplus that silently absorbs the next
+    real trip -- the permissive direction a safety gate must not have.
+    Duplicate events are idempotent under last-wins. Tenant-wide on
+    purpose: until chunk 4 fixes the bucket payload shape for these
+    events, any active kill-switch anywhere blocks advancement, which
+    errs conservative. The 14-day window refinement also lands with
+    chunk 4."""
+    quiet = True
     for event in ev.read_events(paths):
         if event.tenant_id != tenant_id:
             continue
         if event.kind == ev.KIND_GATE_KILLSWITCH_TRIPPED:
-            tripped += 1
+            quiet = False
         elif event.kind == ev.KIND_GATE_KILLSWITCH_CLEARED:
-            cleared += 1
-    return tripped <= cleared
+            quiet = True
+    return quiet
 
 
 def evaluate_advance(
@@ -273,9 +285,14 @@ def evaluate_advance(
                    else "inverted band detected",
         ))
     elif state.phase == 2:
-        top = _top_populated_band(calibration)
+        # The check targets the AUTO band (spec 9.3: "auto-merge
+        # regression rate at top band"), i.e. the highest band, not the
+        # highest band that happens to have data -- a [0.5, 0.6) band
+        # can never auto-merge, so its rate proves nothing. An empty
+        # auto band fails the check: no evidence is not good evidence.
+        top = calibration.bands[0] if calibration.bands else None
         top_rate_ok = (
-            top is not None
+            top is not None and top.n > 0
             and top.regression_rate < g.phase2_max_top_band_regression
         )
         checks.append(GateCheck(
@@ -286,9 +303,10 @@ def evaluate_advance(
         checks.append(GateCheck(
             name="top_band_regression", passed=top_rate_ok,
             detail=(
-                f"top band rate {top.regression_rate:.1%} "
+                f"top band rate {top.regression_rate:.1%} on n={top.n} "
                 f"(need < {g.phase2_max_top_band_regression:.0%})"
-                if top is not None else "no populated band"
+                if top is not None and top.n > 0
+                else "auto band has no samples"
             ),
         ))
         checks.append(GateCheck(
@@ -335,13 +353,6 @@ def evaluate_advance(
         ready=ready,
         checks=tuple(checks),
     )
-
-
-def _top_populated_band(calibration: Calibration):
-    for band in calibration.bands:  # already highest-first
-        if band.n > 0:
-            return band
-    return None
 
 
 __all__ = [
