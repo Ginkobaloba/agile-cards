@@ -13,6 +13,7 @@ const NAV: Array<{ to: string; label: string }> = [
   { to: "/", label: "Kanban" },
   { to: "/grid", label: "Grid" },
   { to: "/submit", label: "Submit Story" },
+  { to: "/triage", label: "Triage" },
   { to: "/sprints", label: "Sprint Planner" },
   { to: "/retros", label: "Retros" },
 ];

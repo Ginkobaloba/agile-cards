@@ -19,6 +19,7 @@ import { Retros } from "./routes/Retros";
 import { SprintDetail } from "./routes/SprintDetail";
 import { SprintPlanner } from "./routes/SprintPlanner";
 import { SubmitStory } from "./routes/SubmitStory";
+import { Triage } from "./routes/Triage";
 
 /**
  * Root component. Gate on auth, then mount the dashboard. Health info
@@ -93,6 +94,7 @@ export function App() {
             element={<Kanban loading={loading} error={error} rates={rates} />}
           />
           <Route path="/submit" element={<SubmitStory />} />
+          <Route path="/triage" element={<Triage rates={rates} />} />
           <Route path="/grid" element={<Grid rates={rates} />} />
           <Route path="/sprints" element={<SprintPlanner />} />
           <Route path="/sprints/:id" element={<SprintDetail />} />

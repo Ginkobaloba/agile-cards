@@ -48,7 +48,30 @@ export function prepareStaging(batchId: string): string {
     fs.rmSync(dir, { recursive: true, force: true });
   }
   fs.mkdirSync(dir, { recursive: true });
+  // Mark the batch as planning-in-progress so the triage inbox keeps
+  // its hands off until the planner lands. Removed by
+  // `markStagingReady` once the manifest is read.
+  fs.writeFileSync(path.join(dir, PLANNING_SENTINEL), "", "utf8");
   return dir;
+}
+
+/**
+ * Sentinel file present in a staging dir while the planner is still
+ * writing into it. The triage inbox skips (and its actions refuse)
+ * batches that carry it.
+ */
+export const PLANNING_SENTINEL = ".planning";
+
+/**
+ * Clear the planning sentinel: the batch is fully written and may be
+ * acted on (batch approve/cancel, or per-card triage). Idempotent.
+ */
+export function markStagingReady(batchId: string): void {
+  try {
+    fs.unlinkSync(path.join(stagingDirFor(batchId), PLANNING_SENTINEL));
+  } catch {
+    /* already gone */
+  }
 }
 
 /** Drop the staging dir for a batch. Used on cancel. */

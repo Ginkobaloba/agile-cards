@@ -188,6 +188,52 @@ export interface SavedView {
   updatedAt: string;
 }
 
+export interface TriageCard {
+  id: string;
+  title: string;
+  file: string;
+  bodyExcerpt: string;
+  tier: number | null;
+  model: string | null;
+  estimatedTokens: number | null;
+  dependsOn: string[];
+}
+
+export interface TriageBatch {
+  batchId: string;
+  story: string | null;
+  cards: TriageCard[];
+}
+
+export const triageApi = {
+  list: (): Promise<{ batches: TriageBatch[] }> => request("/api/triage"),
+
+  promote: (
+    batchId: string,
+    file: string
+  ): Promise<{ id: string; status: StatusId; rank: number }> =>
+    request(
+      `/api/triage/${encodeURIComponent(batchId)}/cards/${encodeURIComponent(file)}/promote`,
+      { method: "POST" }
+    ),
+
+  decline: (batchId: string, file: string): Promise<{ ok: boolean }> =>
+    request(
+      `/api/triage/${encodeURIComponent(batchId)}/cards/${encodeURIComponent(file)}/decline`,
+      { method: "POST" }
+    ),
+
+  merge: (
+    batchId: string,
+    file: string,
+    targetId: string
+  ): Promise<{ ok: boolean; targetId: string }> =>
+    request(
+      `/api/triage/${encodeURIComponent(batchId)}/cards/${encodeURIComponent(file)}/merge`,
+      { method: "POST", body: JSON.stringify({ targetId }) }
+    ),
+};
+
 export type SprintStatus = "planning" | "active" | "completed" | "cancelled";
 
 export interface Sprint {

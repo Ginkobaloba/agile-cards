@@ -398,6 +398,46 @@ export function moveCard(id: string, newStatus: StatusId): Card {
  */
 export type FrontmatterScalar = string | number | boolean | null;
 
+/**
+ * Append a markdown section to a card's body without touching its
+ * frontmatter or moving it between folders. Same atomic-write
+ * discipline as `patchCardFrontmatter`. The triage merge action is the
+ * caller: it absorbs a staged card's body into an existing card.
+ */
+export function appendToCardBody(id: string, section: string): Card {
+  const card = index.get(id);
+  if (!card) throw new Error(`No card with id=${id}`);
+
+  const next = `${card.raw.replace(/\s+$/, "")}\n\n${section.trim()}\n`;
+  const tmpFile = `${card.file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmpFile, next, "utf8");
+  try {
+    fs.renameSync(tmpFile, card.file);
+  } catch (err) {
+    try {
+      fs.unlinkSync(tmpFile);
+    } catch {
+      /* swallow */
+    }
+    throw err;
+  }
+
+  const updated = readCardFromDisk(card.file);
+  if (!updated) {
+    throw new Error(`Append succeeded but reread failed for ${card.file}`);
+  }
+  index.set(updated.id, updated);
+  fileToId.set(card.file, updated.id);
+
+  publish({
+    type: "card-updated",
+    cardId: updated.id,
+    status: updated.status,
+  });
+  recordDerivedEvents(card, updated);
+  return updated;
+}
+
 export function patchCardFrontmatter(
   id: string,
   patch: Record<string, FrontmatterScalar>
