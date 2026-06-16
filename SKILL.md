@@ -68,8 +68,10 @@ Default: two agents, both pinned to `claude-opus-4-7`, both with
 extended thinking enabled. Both invoked directly via the Agent tool.
 
 - **Planner** -- proposes the decomposition. For each proposed card,
-  it sets title, scope, out-of-scope, dependencies, touches, and a
-  first-pass stakes/difficulty read.
+  it sets title, scope, out-of-scope, dependencies, touches,
+  `expected_files` (the scope envelope the confidence merge gate reads
+  as a soft signal; see the card template), and a first-pass
+  stakes/difficulty read.
 - **Reviewer** -- adversarial. Looks for missing dependencies,
   ambiguous scope, undersized or oversized cards, and parallel-hazard
   pairs (sibling cards that share files).
