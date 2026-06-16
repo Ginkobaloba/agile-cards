@@ -318,6 +318,102 @@ def test_build_gate_inputs_climb_to_sonnet() -> None:
     assert inp.verifier_confidence == pytest.approx(0.5)  # worst entry
 
 
+# ---- gate-5: expected_files scope soft signal ------------------------
+
+
+def test_coerce_expected_files_forms() -> None:
+    from cards_runner.daemon.confidence_gate import _coerce_expected_files
+
+    assert _coerce_expected_files(["src/a.py", "tests/**"]) == (
+        "src/a.py", "tests/**")
+    # A bare scalar string is accepted as a one-element list.
+    assert _coerce_expected_files("src/a.py") == ("src/a.py",)
+    # Backslashes are normalized to forward slashes; blanks dropped.
+    assert _coerce_expected_files(["src\\a.py", "  ", 7, None]) == ("src/a.py",)
+    # Unusable inputs -> empty (read as "no declared scope").
+    assert _coerce_expected_files(None) == ()
+    assert _coerce_expected_files({}) == ()
+    assert _coerce_expected_files([]) == ()
+
+
+def test_diff_within_scope_helper() -> None:
+    from cards_runner.daemon.confidence_gate import _diff_within_scope
+
+    globs = ("src/api/**", "tests/**")
+    assert _diff_within_scope(("src/api/x.py", "tests/test_x.py"), globs)
+    # One file outside the envelope -> whole diff is out of scope.
+    assert not _diff_within_scope(("src/api/x.py", "src/other.py"), globs)
+    # No-information cases earn nothing: empty diff or empty scope.
+    assert not _diff_within_scope((), globs)
+    assert not _diff_within_scope(("src/api/x.py",), ())
+
+
+def _scope_record(expected_files: object) -> object:
+    from cards_runner.store.models import CardRecord
+
+    extra: dict[str, object] = {"pin_required": False}
+    if expected_files is not _ABSENT:
+        extra["expected_files"] = expected_files
+    return CardRecord(card_id="c", tenant_id="default", status="active",
+                      work_type="feature", points=3, frontmatter_extra=extra)
+
+
+_ABSENT = object()
+
+
+def _vr_pass() -> object:
+    from cards_runner.verifier import HandlerResult
+    from cards_runner.verifier.runner import ItemResult, VerifierResult
+
+    return VerifierResult(
+        overall_status="pass",
+        items=(ItemResult(item={}, handler_result=HandlerResult(True, {}),
+                          phase="deterministic", item_idx=0),),
+    )
+
+
+def test_build_gate_inputs_scope_within() -> None:
+    record = _scope_record(["src/api/**", "tests/**"])
+    diff = DiffStats(files=("src/api/x.py", "tests/test_x.py"),
+                     lines_added=20, lines_removed=2)
+    inp = build_gate_inputs(record=record, verifier_result=_vr_pass(),
+                            diff_stats=diff)
+    assert inp.diff_within_declared_scope is True
+
+
+def test_build_gate_inputs_scope_strays_outside() -> None:
+    record = _scope_record(["src/api/**"])
+    diff = DiffStats(files=("src/api/x.py", "src/billing/charge.py"),
+                     lines_added=20, lines_removed=2)
+    inp = build_gate_inputs(record=record, verifier_result=_vr_pass(),
+                            diff_stats=diff)
+    assert inp.diff_within_declared_scope is False
+
+
+def test_build_gate_inputs_scope_absent_is_neutral() -> None:
+    """No `expected_files:` -> signal stays False (no behavior change)."""
+    record = _scope_record(_ABSENT)
+    diff = DiffStats(files=("src/api/x.py",), lines_added=20, lines_removed=2)
+    inp = build_gate_inputs(record=record, verifier_result=_vr_pass(),
+                            diff_stats=diff)
+    assert inp.diff_within_declared_scope is False
+
+
+def test_build_gate_inputs_scope_empty_list_is_neutral() -> None:
+    record = _scope_record([])
+    diff = DiffStats(files=("src/api/x.py",), lines_added=20, lines_removed=2)
+    inp = build_gate_inputs(record=record, verifier_result=_vr_pass(),
+                            diff_stats=diff)
+    assert inp.diff_within_declared_scope is False
+
+
+def test_build_gate_inputs_scope_present_but_empty_diff_is_neutral() -> None:
+    record = _scope_record(["src/api/**"])
+    inp = build_gate_inputs(record=record, verifier_result=_vr_pass(),
+                            diff_stats=DiffStats())
+    assert inp.diff_within_declared_scope is False
+
+
 # ---- bucket-history reader -------------------------------------------
 
 

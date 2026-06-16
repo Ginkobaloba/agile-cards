@@ -25,6 +25,10 @@ touches:
   - src/api/middleware/rate_limit.py
   - src/api/app.py
   - tests/api/middleware/test_rate_limit.py
+expected_files:
+  - src/api/middleware/**
+  - src/api/app.py
+  - tests/api/middleware/**
 batch: b001
 story_hash: 7c3a9b1e2d4f5a6b8c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b
 trace_id: 0f8e7d6c-5b4a-3210-9876-543210fedcba

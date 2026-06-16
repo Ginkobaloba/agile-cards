@@ -24,10 +24,11 @@ WOULD decide without changing routing until an operator advances the ramp
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Iterable
 
 from ..common.types import now_utc_iso
 from ..verifier.risk_factor import RiskFactor, SEVERITY_HIGH, SEVERITY_LOW, SEVERITY_MEDIUM
+from .diff_stats import matches_any_glob
 
 # Outcomes (reuse the chunk-4 vocabulary; spec 2 "no new enum values").
 OUTCOME_AUTO = "auto"
@@ -288,6 +289,44 @@ def _is_test_path(path: str) -> bool:
     )
 
 
+def _coerce_expected_files(raw: Any) -> tuple[str, ...]:
+    """Normalize a card's `expected_files:` frontmatter to a glob tuple.
+
+    Gate-5 (spec 12.4 option A). The planner declares the file scope it
+    expects a card to touch; the gate uses it as a soft signal. Total and
+    forgiving: a non-list, or a list with non-string / blank entries,
+    yields only the usable globs. A scalar string is accepted as a
+    one-element list (a planner that wrote a single path bare). Anything
+    unusable -> empty tuple, which the caller reads as "no declared scope"
+    so the signal contributes 0 (no behavior change when absent)."""
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, (list, tuple)):
+        return ()
+    out: list[str] = []
+    for entry in raw:
+        if isinstance(entry, str) and entry.strip():
+            out.append(entry.strip().replace("\\", "/"))
+    return tuple(out)
+
+
+def _diff_within_scope(
+    diff_files: Iterable[str], expected_globs: Iterable[str]
+) -> bool:
+    """True when every changed file falls inside the declared scope.
+
+    Gate-5 scope soft signal (spec 3.7 `diff_within_declared_scope`).
+    Mirrors the `diff_is_test_only` idiom: requires at least one changed
+    file AND every file matching at least one expected glob. An empty diff
+    or an empty scope declaration returns False -- a no-information case
+    must not earn the +0.05 in-scope bonus."""
+    globs = tuple(expected_globs)
+    files = tuple(diff_files)
+    if not globs or not files:
+        return False
+    return all(matches_any_glob(f, globs) for f in files)
+
+
 def build_gate_inputs(
     *,
     record: Any,
@@ -300,9 +339,12 @@ def build_gate_inputs(
     """Extract `GateInputs` from a verifier result + the worktree diff.
 
     Pure and side-effect-free (the daemon supplies the already-built
-    `verifier_result` and `diff_stats`). Signals not yet available from
-    `verify_card` (expected-files scope -> gate-5; verifier incomplete
-    metrics; change-request-unresolved) default to their neutral value."""
+    `verifier_result` and `diff_stats`). The expected-files scope signal
+    (gate-5) is read from the card's `expected_files:` frontmatter and
+    compared against the diff; absent or empty, it stays neutral (False ->
+    contributes 0). Signals still not available from `verify_card`
+    (verifier incomplete metrics; change-request-unresolved) default to
+    their neutral value."""
     cfg = config or ConfidenceGateConfig()
     items = tuple(getattr(verifier_result, "items", ()) or ())
     det = [it for it in items if getattr(it, "phase", "") == "deterministic"]
@@ -335,6 +377,8 @@ def build_gate_inputs(
     pin = record.field_value("pin_required")
     files = tuple(getattr(diff_stats, "files", ()) or ())
     diff_is_test_only = bool(files) and all(_is_test_path(f) for f in files)
+    expected_globs = _coerce_expected_files(record.field_value("expected_files"))
+    within_scope = _diff_within_scope(files, expected_globs)
 
     return GateInputs(
         work_type=record.work_type,
@@ -348,6 +392,7 @@ def build_gate_inputs(
         sibling_decision=sibling_decision,
         diff_total_lines=diff_stats.total_lines,
         diff_is_test_only=diff_is_test_only,
+        diff_within_declared_scope=within_scope,
         sensitive_path_touched=diff_stats.any_path_matches(cfg.sensitive_paths),
         schema_migration_in_diff=diff_stats.any_path_matches(
             cfg.schema_migration_globs),

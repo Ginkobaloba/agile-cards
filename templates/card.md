@@ -89,6 +89,19 @@ depends_on: []
 touches:
   - src/example.py
 
+# Planner-declared scope envelope for the confidence merge gate (gate-5).
+# Files or globs the card's diff is expected to stay within. The gate
+# reads this as a soft signal: when present and the whole diff fits
+# inside it, the card earns a small confidence bonus; a diff that strays
+# outside the envelope earns nothing. Optional and additive -- omit it
+# (or leave it empty) and the signal simply contributes 0, with no
+# behavior change. Distinct from `touches:` (sibling-conflict
+# detection): `expected_files` is the gate's scope check and may be
+# broader (e.g. a directory glob) to fence the card's blast radius.
+expected_files:
+  - src/example.py
+  - tests/**
+
 # The /cards batch this card came from. Links to the manifest.
 batch: b000
 
