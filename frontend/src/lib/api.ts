@@ -117,13 +117,19 @@ export const api = {
 
   /**
    * Update a whitelisted set of scalar frontmatter fields on a card.
-   * v1 accepts `stakes` and `cost_cap_usd`; the backend rejects
-   * anything else with a 400. The grid's drag-to-restake handler is
-   * the primary caller.
+   * The backend rejects anything outside the whitelist with a 400.
+   * Callers: the grid's drag-to-restake handler (`stakes`) and the
+   * backlog grooming surface (`title`, `points`, `stakes`, `ready`).
    */
   patchCardFrontmatter: (
     id: string,
-    patch: { stakes?: string | null; cost_cap_usd?: number | null }
+    patch: {
+      stakes?: string | null;
+      cost_cap_usd?: number | null;
+      title?: string;
+      points?: number;
+      ready?: boolean | null;
+    }
   ): Promise<CardSummary> =>
     request(`/api/cards/${encodeURIComponent(id)}/frontmatter`, {
       method: "PATCH",

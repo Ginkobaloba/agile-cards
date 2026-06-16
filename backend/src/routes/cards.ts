@@ -134,16 +134,25 @@ export function cardsRouter(): Router {
 }
 
 /**
- * Whitelisted PATCH validator. The grid view writes back a tightly-
- * scoped set of fields; anything else is rejected so this route can't
- * be turned into a generic frontmatter editor (which would need a much
- * broader threat model). Add a key to ALLOWED only after thinking about
- * what disk-truth invariants it touches.
+ * Whitelisted PATCH validator. The grid view and the backlog grooming
+ * surface write back a tightly-scoped set of fields; anything else is
+ * rejected so this route can't be turned into a generic frontmatter
+ * editor (which would need a much broader threat model). Add a key to
+ * the whitelist only after thinking about what disk-truth invariants it
+ * touches.
  *
  *   - `stakes`: one of "low" | "medium" | "high" | null (null deletes).
  *   - `cost_cap_usd`: positive finite number, or null to clear.
+ *   - `title`: non-empty string (trimmed). Grooming rename.
+ *   - `points`: integer tier 1..6. Grooming re-size.
+ *   - `ready`: boolean (the grooming "ready for sprint" label), or null
+ *     to clear back to ice-box. Distinct from `status:`, which the
+ *     runner owns; `ready` is a planner/operator grooming signal that
+ *     never moves the card between folders.
  */
 const ALLOWED_STAKES = new Set(["low", "medium", "high"]);
+const MIN_TIER = 1;
+const MAX_TIER = 6;
 
 type PatchValidation =
   | { kind: "ok"; patch: Record<string, FrontmatterScalar> }
@@ -182,6 +191,48 @@ function validateFrontmatterPatch(
         };
       }
       out["cost_cap_usd"] = v;
+      continue;
+    }
+    if (key === "title") {
+      const v = body[key];
+      if (typeof v !== "string" || v.trim().length === 0) {
+        return {
+          kind: "error",
+          error: `title must be a non-empty string, got ${JSON.stringify(v)}`,
+        };
+      }
+      out["title"] = v.trim();
+      continue;
+    }
+    if (key === "points") {
+      const v = body[key];
+      if (
+        typeof v !== "number" ||
+        !Number.isInteger(v) ||
+        v < MIN_TIER ||
+        v > MAX_TIER
+      ) {
+        return {
+          kind: "error",
+          error: `points must be an integer ${MIN_TIER}..${MAX_TIER}, got ${JSON.stringify(v)}`,
+        };
+      }
+      out["points"] = v;
+      continue;
+    }
+    if (key === "ready") {
+      const v = body[key];
+      if (v === null) {
+        out["ready"] = null;
+        continue;
+      }
+      if (typeof v !== "boolean") {
+        return {
+          kind: "error",
+          error: `ready must be a boolean or null, got ${JSON.stringify(v)}`,
+        };
+      }
+      out["ready"] = v;
       continue;
     }
     return { kind: "error", error: `field not patchable: ${key}` };

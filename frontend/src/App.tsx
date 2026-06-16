@@ -13,6 +13,7 @@ import { useRates } from "./hooks/useRates";
 import { useSSE } from "./hooks/useSSE";
 import { api } from "./lib/api";
 import { filtersFromParams, filtersToParams, useFilters } from "./state/filters";
+import { Backlog } from "./routes/Backlog";
 import { Grid } from "./routes/Grid";
 import { Kanban } from "./routes/Kanban";
 import { Retros } from "./routes/Retros";
@@ -93,6 +94,7 @@ export function App() {
             path="/"
             element={<Kanban loading={loading} error={error} rates={rates} />}
           />
+          <Route path="/backlog" element={<Backlog />} />
           <Route path="/submit" element={<SubmitStory />} />
           <Route path="/triage" element={<Triage rates={rates} />} />
           <Route path="/grid" element={<Grid rates={rates} />} />

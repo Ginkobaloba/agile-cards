@@ -359,4 +359,136 @@ describe("PATCH /api/cards/:id/frontmatter", () => {
       await srv.close();
     }
   });
+
+  // ---- backlog grooming fields (title / points / ready) -------------
+
+  function seedGroomCard(): string {
+    // Fresh card so the grooming-field tests don't couple to the
+    // mutation order of the stakes/cost tests above.
+    const file = path.join(tmpRoot, "backlog", "test-groom.md");
+    fs.writeFileSync(
+      file,
+      [
+        "---",
+        "id: test-groom",
+        "title: Groom Me",
+        "status: backlog",
+        "points: 3",
+        "---",
+        "",
+        "Body.",
+        "",
+      ].join("\n"),
+      "utf8"
+    );
+    return file;
+  }
+
+  test("grooming: rename via title, re-tier via points, atomically", async () => {
+    const file = seedGroomCard();
+    const w = cardsFs.startWatcher();
+    await w.close();
+    const srv = await startTestServer();
+    try {
+      const r = await jsonReq(
+        "PATCH",
+        `${srv.url}/api/cards/test-groom/frontmatter`,
+        { title: "Groomed Title", points: 5 }
+      );
+      assert.equal(r.status, 200);
+      const card = r.json as { frontmatter: Record<string, unknown> };
+      assert.equal(card.frontmatter["title"], "Groomed Title");
+      assert.equal(card.frontmatter["points"], 5);
+      const raw = fs.readFileSync(file, "utf8");
+      assert.match(raw, /^title:\s*Groomed Title$/m);
+      assert.match(raw, /^points:\s*5$/m);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  test("grooming: ready toggle inserts the field then clears it", async () => {
+    const file = seedGroomCard();
+    const w = cardsFs.startWatcher();
+    await w.close();
+    const srv = await startTestServer();
+    try {
+      // Insert path: card has no `ready:` line yet.
+      const on = await jsonReq(
+        "PATCH",
+        `${srv.url}/api/cards/test-groom/frontmatter`,
+        { ready: true }
+      );
+      assert.equal(on.status, 200);
+      assert.equal(
+        (on.json as { frontmatter: Record<string, unknown> }).frontmatter[
+          "ready"
+        ],
+        true
+      );
+      assert.match(fs.readFileSync(file, "utf8"), /^ready:\s*true$/m);
+
+      // null clears the line back to ice-box.
+      const off = await jsonReq(
+        "PATCH",
+        `${srv.url}/api/cards/test-groom/frontmatter`,
+        { ready: null }
+      );
+      assert.equal(off.status, 200);
+      assert.equal(
+        (off.json as { frontmatter: Record<string, unknown> }).frontmatter[
+          "ready"
+        ],
+        undefined
+      );
+      assert.doesNotMatch(fs.readFileSync(file, "utf8"), /^ready:/m);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  test("rejects an empty title", async () => {
+    const srv = await startTestServer();
+    try {
+      const r = await jsonReq(
+        "PATCH",
+        `${srv.url}/api/cards/test-001/frontmatter`,
+        { title: "   " }
+      );
+      assert.equal(r.status, 400);
+      assert.match((r.json as { error: string }).error, /title must be/);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  test("rejects out-of-range points", async () => {
+    const srv = await startTestServer();
+    try {
+      const r = await jsonReq(
+        "PATCH",
+        `${srv.url}/api/cards/test-001/frontmatter`,
+        { points: 9 }
+      );
+      assert.equal(r.status, 400);
+      assert.match((r.json as { error: string }).error, /points must be/);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  test("rejects a non-boolean ready", async () => {
+    const srv = await startTestServer();
+    try {
+      const r = await jsonReq(
+        "PATCH",
+        `${srv.url}/api/cards/test-001/frontmatter`,
+        { ready: "yes" }
+      );
+      assert.equal(r.status, 400);
+      assert.match((r.json as { error: string }).error, /ready must be/);
+    } finally {
+      await srv.close();
+    }
+  });
 });

@@ -11,6 +11,7 @@ interface Props {
 
 const NAV: Array<{ to: string; label: string }> = [
   { to: "/", label: "Kanban" },
+  { to: "/backlog", label: "Backlog" },
   { to: "/grid", label: "Grid" },
   { to: "/submit", label: "Submit Story" },
   { to: "/triage", label: "Triage" },

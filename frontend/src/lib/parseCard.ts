@@ -55,6 +55,16 @@ export function cardPinRequired(c: CardSummary): boolean {
   return c.frontmatter["pin_required"] === true;
 }
 
+/**
+ * The grooming "ready for sprint" label. Distinct from `status:` -- a
+ * card stays in the backlog folder whether or not it is marked ready;
+ * `ready` only splits the ice-box from the sprint-ready set in the
+ * backlog grooming surface.
+ */
+export function cardReady(c: CardSummary): boolean {
+  return c.frontmatter["ready"] === true;
+}
+
 export function cardDependsOn(c: CardSummary): string[] {
   const d = c.frontmatter["depends_on"];
   if (Array.isArray(d)) return d.filter((x): x is string => typeof x === "string");
