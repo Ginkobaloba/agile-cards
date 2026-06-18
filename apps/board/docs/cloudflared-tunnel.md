@@ -51,7 +51,7 @@ skip it.
 ### One-time setup on the 4070
 
 ```powershell
-cd C:\dev\agile-cards-board
+cd C:\dev\agile-cards\apps\board
 Copy-Item .env.example .env
 notepad .env  # paste the real TUNNEL_TOKEN
 ```
@@ -67,7 +67,7 @@ DELETE /accounts/<acc>/cfd_tunnel/<tunnel_id>/token  (revoke + reissue)
 ### Day-to-day
 
 ```powershell
-cd C:\dev\agile-cards-board
+cd C:\dev\agile-cards\apps\board
 docker compose up -d
 docker compose logs -f cloudflared
 ```

@@ -48,7 +48,7 @@ all-in-one production-style run.
 
 ```powershell
 # 1) Install
-cd C:\dev\agile-cards-board\backend
+cd C:\dev\agile-cards\apps\board\backend
 npm install
 
 cd ..\frontend
@@ -56,7 +56,7 @@ npm install
 
 # 2) Point the backend at your card store. Default is C:\dev\todo.
 $env:CARDS_DIR = "C:\dev\todo"
-$env:DB_PATH   = "C:\dev\agile-cards-board\backend\data\board.sqlite"
+$env:DB_PATH   = "C:\dev\agile-cards\apps\board\backend\data\board.sqlite"
 $env:PORT      = "4070"
 
 # 3) Mint your first auth token
@@ -79,7 +79,7 @@ Open `http://localhost:5173`, paste your token when prompted, you're in.
 ### With Docker (single-host production-style)
 
 ```powershell
-cd C:\dev\agile-cards-board
+cd C:\dev\agile-cards\apps\board
 docker compose up --build
 ```
 
