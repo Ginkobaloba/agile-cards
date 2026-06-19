@@ -1,0 +1,70 @@
+# docker-compose for agile-cards-board.
+#
+# Single-host run. Backend talks to a bind-mounted card store on the host
+# and persists SQLite to a named volume. Nginx serves the built frontend
+# static files and proxies /api + /events to the backend.
+#
+# BASE_PATH drives where the frontend lives in the URL space. Default
+# is "/" (back-compat with the pre-portal deployment); set BASE_PATH in
+# the environment (or in a .env file alongside this compose file) to
+# "/board/" to host this stack behind the Paradigm portal reverse proxy.
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: agile-cards-board-backend
+    restart: unless-stopped
+    environment:
+      PORT: "4070"
+      CARDS_DIR: "/cards"
+      DB_PATH: "/data/board.sqlite"
+      # CORS_ORIGIN is a comma-separated list. The default covers the
+      # docker frontend (localhost:8080) plus the portal hostname so
+      # browser calls coming through the portal reverse proxy are
+      # accepted. Add more origins as needed.
+      CORS_ORIGIN: "${CORS_ORIGIN:-http://localhost:8080,https://portal.projectnexuscode.org}"
+      LOG_LEVEL: "info"
+    volumes:
+      # Host card store. Edit the source path on the left for your machine.
+      - "C:/dev/todo:/cards:rw"
+      - "board-data:/data"
+    ports:
+      # Expose for direct debugging. Nginx proxies in normal use.
+      - "4070:4070"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+      args:
+        BASE_PATH: "${BASE_PATH:-/}"
+    container_name: agile-cards-board-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+
+  # Cloudflare Tunnel connector. Exposes the frontend container to the
+  # public internet at app.projectnexuscode.org via Cloudflare's edge.
+  # Cloudflare Access (configured in the dashboard, account-side) sits
+  # in front of the tunnel and enforces identity. The dashboard's own
+  # bearer-token middleware stays as defense in depth.
+  #
+  # Bring up only on the machine that should host the public dashboard
+  # (currently the 4070). The TUNNEL_TOKEN env var is required, see
+  # .env.example.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: agile-cards-board-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: "${TUNNEL_TOKEN:?TUNNEL_TOKEN is required, see .env.example}"
+    depends_on:
+      - frontend
+
+volumes:
+  board-data:

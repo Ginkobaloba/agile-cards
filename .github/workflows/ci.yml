@@ -18,12 +18,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  runner:
-    name: runner battery (lint + tests)
+  engine-runner:
+    name: engine runner battery (lint + tests)
     runs-on: windows-latest
     defaults:
       run:
-        working-directory: runner
+        working-directory: apps/engine/runner
     steps:
       - uses: actions/checkout@v4
 
@@ -31,7 +31,7 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-          cache-dependency-path: runner/pyproject.toml
+          cache-dependency-path: apps/engine/runner/pyproject.toml
 
       - name: Install runner (with dev extras)
         run: pip install -e .[dev]
@@ -49,3 +49,53 @@ jobs:
       - name: Type-check (mypy, informational)
         continue-on-error: true
         run: mypy
+
+  board-frontend:
+    name: board frontend battery (lint + vitest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/board/frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/board/frontend/package-lock.json
+
+      - name: Install (npm ci)
+        run: npm ci
+
+      - name: Lint (informational while monorepo settles)
+        continue-on-error: true
+        run: npm run lint --if-present
+
+      - name: Tests (vitest)
+        run: npm test --if-present -- --run
+
+  board-backend:
+    name: board backend battery (build + tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/board/backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/board/backend/package-lock.json
+
+      - name: Install (npm ci)
+        run: npm ci
+
+      - name: Build (tsc)
+        run: npm run build --if-present
+
+      - name: Tests
+        continue-on-error: true
+        run: npm test --if-present

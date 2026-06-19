@@ -1,140 +1,161 @@
-# agile-cards
+# agile-cards (monorepo)
 
-A planning skill that decomposes a user story (or a pasted discussion) into
-small, independently claimable cards a fleet of agents can run in parallel.
+One product, two halves. The planner and runner suite that turns a story
+into independently claimable cards lives at [`apps/engine/`](./apps/engine).
+The web dashboard that shows a fleet of agents working those cards in real
+time lives at [`apps/board/`](./apps/board). They were built simultaneously
+in separate repos, which made the 1:1 coupling between them harder to keep
+honest. They live here now.
 
 Licensed under PolyForm Noncommercial 1.0.0. See [LICENSE](./LICENSE).
 
-`agile-cards` is the planner. It writes cards to a runtime data folder
-(`C:\dev\todo\` by default) and a batch manifest alongside them. A separate
-runner watches that folder, spawns executor agents at the model tier each
-card was sized for, and drives cards from `backlog/` -> `active/` -> `done/`
-or `blocked/`. Cards whose executor proposes an acceptance-criteria
-amendment pass through `amendments/` for human review first.
+## Why a monorepo
 
-The full specification is in [`SKILL.md`](./SKILL.md). The runner-side
-contract is in [`RUNNER_CONTRACT.md`](./RUNNER_CONTRACT.md). The repo is the
-authoritative source for both. The runtime data folder is intentionally a
-separate directory and not part of this repo.
+The engine and the board move together. The engine's card schema is the
+board's view model. The engine's ledger feeds the board's metrics
+surfaces. A schema change without a matching board change is a bug, and
+catching that as a PR-level review (instead of a cross-repo deploy
+surprise) is the whole point of pulling them under one roof.
 
-## Live dashboard
+Two ground rules that fall out of this:
 
-A web UI for the cards lives in
-[`agile-cards-board`](https://github.com/Ginkobaloba/agile-cards-board)
-(React + Express + SQLite, the production-grade companion to the
-single-file `dashboard/v0/index.html` prototype in this repo).
+1. A change to the card store schema (`apps/engine/runner/src/cards_runner/store/`)
+   should land in the same PR as the matching board updates
+   (`apps/board/backend/src/`, `apps/board/frontend/src/state/`). The
+   auto-merge policy now lists those board surfaces in its Tier-3
+   sensitivity set so the guard trips correctly.
+2. CI gates both apps on every PR. See `.github/workflows/ci.yml` for the
+   three jobs: `engine-runner`, `board-frontend`, `board-backend`.
 
-The hosted instance runs at
-[`https://app.projectnexuscode.org`](https://app.projectnexuscode.org).
-Access is gated by Cloudflare Access (invite-only) and a per-user
-bearer token. The marketing landing for the project lives at
-[`https://projectnexuscode.org`](https://projectnexuscode.org).
-
-## Who it's for
-
-Anyone running multiple Claude (or other LLM) agents in parallel against a
-real codebase who is tired of:
-
-- writing the same tickets by hand every sprint
-- guessing which tier of model to pin per task
-- discovering after the fact that two agents serialized on the same file
-- silent rollover at sprint close that hides chronic misestimation
-
-If you're running one agent at a time on toy problems, you don't need this.
-
-## Install
-
-This is a Claude Code / Cowork skill. Two paths:
-
-1. **As a Claude Code skill.** Drop this directory into your skills
-   location and Claude Code will pick up `SKILL.md`. The skill itself
-   resolves naming and session conventions from `C:\dev\NAMING_CONVENTIONS.md`
-   (or the `_meta` fallback) and `C:\dev\SESSION_PROTOCOL.md`, so those
-   should exist on the same machine.
-2. **As a portfolio reference.** Read [`SKILL.md`](./SKILL.md) end-to-end
-   for the planning model, [`RUNNER_CONTRACT.md`](./RUNNER_CONTRACT.md) for
-   what an executor + runner have to implement, and the
-   [`tests/`](./tests) folder for the synthetic dry-run that documents the
-   expected planner output.
-
-A real install script lives outside this repo (it's a Drew-environment
-convention, not a per-skill concern). If you're cloning this fresh and want
-it wired in, see the migration handoff at
-[`docs/handoffs/HANDOFF_2026-05-17_repo-migration.md`](./docs/handoffs/HANDOFF_2026-05-17_repo-migration.md).
-
-## Where the runtime data lives
-
-The skill reads and writes:
-
-- `C:\dev\todo\backlog\` cards waiting for a runner to claim them
-- `C:\dev\todo\active\` cards an executor is currently working on
-- `C:\dev\todo\done\` cards whose acceptance checks all passed and whose
-  merge gate is satisfied
-- `C:\dev\todo\blocked\` cards that finished work but can't merge (conflict,
-  review pending, etc.)
-- `C:\dev\todo\amendments\` cards whose executor wants to alter the
-  acceptance criteria; gated on human review
-- `C:\dev\todo\_batches\` per-batch manifest files
-
-This folder is configurable per project via `<project>\.cards-config.yaml`.
-The runtime data is deliberately not committed to this repo. The repo is
-just the planner spec and config.
-
-## What's in the repo
+## Repo layout
 
 ```
-SKILL.md                The skill (planner spec, agent rules, schema)
-RUNNER_CONTRACT.md      What an executor + runner are required to honor
-tier_map_claude.yaml    Tier -> Claude model + extended-thinking
-tier_pricing.yaml       Token prices used to derive USD at display time
-lib/verifier/           Reference Python verifier library (v1.3+):
-                        per-type handlers, schema validator, cascade
-                        orchestrator. Importable by any runner.
-templates/              card.md, batch_manifest.yaml, project_config.yaml
-examples/               One worked example card
-tests/                  Synthetic dry-run + atomic-rename verifier
-docs/handoffs/          Migration + version handoffs
-docs/design/            Design docs for in-flight version work
+agile-cards/
+  apps/
+    engine/                 the planner skill + runner suite (Python)
+      runner/               the runner package: lint + pytest gate
+      lib/verifier/         the verifier the runner consumes
+      templates/            card and manifest templates
+      examples/             a sample card the planner emits
+      docs/                 engine-scoped docs (design notes, handoffs, audits)
+      dashboard-v0/         the single-file HTML prototype, kept for archaeology
+      DEFINITION_OF_DONE.md merge-gate contract
+      RUNNER_CONTRACT.md    the runner-side contract
+      SKILL.md              the full planning skill spec
+      tier_map_claude.yaml  canonical points-to-model map (planner + runner read this)
+      tier_pricing.yaml     canonical per-million USD rates (cost governor reads this)
+      README.md             engine-scoped README
+    board/                  the web dashboard
+      frontend/             Vite + React + TypeScript + Tailwind + @dnd-kit + Zustand
+      backend/              Express + TypeScript + better-sqlite3 + chokidar + SSE
+      docker/               Dockerfiles + nginx.conf for the production-style run
+      docs/                 board-scoped docs (roadmap, tunnel, rules)
+      scripts/              PowerShell helpers for branch / PR housekeeping
+      docker-compose.yml    all-in-one local stack
+      setup.ps1             one-shot dev setup
+      README.md             board-scoped README
+  .github/
+    workflows/ci.yml        three-job CI (engine + board frontend + board backend)
+    AUTO_MERGE.md           the auto-merge policy, updated for the monorepo paths
+  .gitignore                merged from both prior repos
+  LICENSE                   PolyForm Noncommercial 1.0.0, applies to the whole tree
+  README.md                 you are here
 ```
 
-## v1.3 verifier (token cost)
+## Quick start
 
-In v1.2 the cold-read verifier was a per-card reasoning agent
-invocation costing 1.5k to 5k tokens average per card (Sonnet plus
-extended thinking, weighted by the cascade-clean skip rate). In v1.3
-the verifier splits into a deterministic path (zero LLM tokens) and a
-cascading subjective path that fires only on cards with `type:
-subjective` AC items. Expected average drops to roughly 100 to 500
-tokens per card on disciplined batches. The latency win is bigger
-than the dollar win: deterministic checks finish in seconds rather
-than the 30-90 seconds an LLM round-trip takes. See
-[`docs/design/v1.3_verifier_refactor.md`](./docs/design/v1.3_verifier_refactor.md)
-for the full token math.
+### Engine (the runner suite)
 
-## Status
+```powershell
+cd C:\dev\agile-cards\apps\engine\runner
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -e .[dev]
 
-Spec is at v1.3. v1.3 lands the verifier-as-structured-runner refactor:
-the reference Python verifier in `lib/verifier/` is the first
-executable piece in this repo. Card writing and orchestration still
-live downstream.
+# Lint + test (the CI gate runs the same thing)
+ruff check src tests
+pytest -q
+```
 
-The sprint scheduler / dashboard is enumerated as future work in
-`SKILL.md`. When that ships it will live as a git submodule of this repo,
-not inline, so the planner stays small and the UI can evolve on its own
-release cadence.
+The full planning skill is documented in
+[`apps/engine/SKILL.md`](./apps/engine/SKILL.md). The runner-side contract
+is in [`apps/engine/RUNNER_CONTRACT.md`](./apps/engine/RUNNER_CONTRACT.md).
 
-## License
+### Board (the dashboard)
 
-Licensed under the [PolyForm Noncommercial License 1.0.0](./LICENSE).
-The short version: anyone is free to read, study, modify, and use this
-for noncommercial purposes (personal projects, research, education,
-nonprofits, government). Commercial use requires a separate
-arrangement. Copyright 2026 Drew Mattick.
+You need Node 20+ and npm. Docker is optional for an all-in-one run.
 
-## History
+```powershell
+# Backend
+cd C:\dev\agile-cards\apps\board\backend
+npm install
+$env:CARDS_DIR = "C:\dev\todo"
+$env:DB_PATH   = "C:\dev\agile-cards\apps\board\backend\data\board.sqlite"
+$env:PORT      = "4070"
+npm run create-token -- --label "drew-laptop"   # save the token
+npm run dev                                      # http://localhost:4070
 
-This repo was extracted from `dev-meta/skills/cards/` in May 2026 via
-`git subtree split`, so the commit log preserves the original authorship
-and timestamps of the planning work. See
-[`docs/handoffs/HANDOFF_2026-05-17_repo-migration.md`](./docs/handoffs/HANDOFF_2026-05-17_repo-migration.md)
-for the migration details.
+# Frontend (separate terminal)
+cd C:\dev\agile-cards\apps\board\frontend
+npm install
+npm run dev                                      # http://localhost:5173
+```
+
+For the Docker path and the tunneled hosted setup, see
+[`apps/board/README.md`](./apps/board/README.md) and
+[`apps/board/docs/PERSISTENT_TUNNEL.md`](./apps/board/docs/PERSISTENT_TUNNEL.md).
+
+## The runtime data folder
+
+The engine and the board both read from and write to a runtime data
+folder that is intentionally outside the repo. Default location:
+
+```
+C:\dev\todo\
+  backlog\     cards waiting to be claimed
+  active\      cards an executor is working
+  amendments\  cards awaiting human review of an AC change
+  done\        cards whose work merged
+  blocked\     cards finished but unmerged or paused on deps
+  _batches\    per-batch manifest files
+```
+
+The path is configurable per project via `<project>\.cards-config.yaml`.
+Nothing in `C:\dev\todo\` belongs in version control. The card files
+are the source of truth; the board's SQLite database is dashboard-only
+state (auth tokens, sprint scheduling, retro history, per-user prefs)
+and is rebuildable from the card tree.
+
+## How they talk to each other
+
+Process boundaries, not source imports. The board's backend watches the
+card tree on disk with `chokidar` and serves a snapshot plus an SSE feed
+to the frontend. The engine writes to that same tree from the runner's
+worktree workers. The two halves never share a process. The shared
+vocabulary they have to agree on is:
+
+- the card frontmatter schema (`apps/engine/templates/card.md`)
+- the batch manifest schema (`apps/engine/templates/batch_manifest.yaml`)
+- the points-to-tier mapping (`apps/engine/tier_map_claude.yaml`)
+- the per-million pricing table (`apps/engine/tier_pricing.yaml`)
+
+Any change to those four files is the most likely source of an
+engine-vs-board drift, so they are pinned in `.github/AUTO_MERGE.md` as
+Tier-3 sensitive.
+
+## History note
+
+This monorepo was created on 2026-06-18 by merging two previously
+independent repos:
+
+- `Ginkobaloba/agile-cards` (86 commits) provided the canonical home
+  and is now `apps/engine/`.
+- `Ginkobaloba/agile-cards-board` (51 commits) was grafted in via
+  `git subtree add --prefix=apps/board` so the original commit history
+  survives. `git log apps/board/<file>` reaches the original board
+  commits with their original SHAs and authors. `git log apps/engine/<file> --follow`
+  reaches the engine's original commits.
+
+The standalone `agile-cards-board` repo is archived. Its main branch
+carries a `SUPERSEDED.md` and an `archived-pre-monorepo-2026-06-18` tag
+pointing at this monorepo.

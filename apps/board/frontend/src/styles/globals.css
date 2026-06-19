@@ -1,0 +1,99 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Reset and global behavior. */
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  margin: 0;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+* {
+  box-sizing: border-box;
+}
+
+/* Scrollbar polish (Chromium/WebKit). */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #262d39;
+  border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3a4252;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Reusable surface tokens. */
+@layer components {
+  .surface {
+    @apply bg-panel border border-border rounded;
+  }
+  .surface-2 {
+    @apply bg-panel2 border border-border rounded;
+  }
+  .btn {
+    @apply bg-panel2 text-text border border-border rounded px-3 py-1.5 text-xs cursor-pointer transition-colors;
+  }
+  .btn:hover {
+    @apply bg-[#232a35];
+  }
+  .btn-primary {
+    @apply bg-accent/20 border-accent text-accent;
+  }
+  .btn-primary:hover {
+    @apply bg-accent/30;
+  }
+  .input {
+    @apply bg-panel2 border border-border rounded px-3 py-1.5 text-sm text-text outline-none;
+  }
+  .input:focus {
+    @apply border-accent;
+  }
+}
+
+/* Card body markdown styling (react-markdown). */
+.markdown {
+  @apply text-text leading-relaxed;
+}
+.markdown h1,
+.markdown h2,
+.markdown h3 {
+  @apply text-text font-semibold mt-4 mb-2;
+}
+.markdown h2 {
+  @apply text-base text-accent border-b border-border pb-1;
+}
+.markdown h3 {
+  @apply text-sm;
+}
+.markdown p {
+  @apply my-2;
+}
+.markdown code {
+  @apply font-mono text-xs bg-panel2 px-1 py-0.5 rounded;
+}
+.markdown pre {
+  @apply bg-panel2 border border-border rounded p-3 overflow-x-auto;
+}
+.markdown pre code {
+  @apply bg-transparent p-0;
+}
+.markdown ul,
+.markdown ol {
+  @apply pl-5 my-2;
+}
+.markdown li {
+  @apply my-1;
+}
+.markdown a {
+  @apply text-accent underline;
+}

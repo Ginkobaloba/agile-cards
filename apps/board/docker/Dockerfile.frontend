@@ -1,0 +1,32 @@
+# Builds the React app and serves the static output through nginx.
+# Nginx also proxies /api and /events to the backend container.
+#
+# BASE_PATH bakes both Vite's `base` (used for built asset URLs and the
+# router basename) and the nginx location prefixes. Default "/" preserves
+# the pre-portal deployment. Set BASE_PATH=/board/ to host this image
+# behind the Paradigm portal reverse proxy.
+
+FROM node:20-alpine AS build
+ARG BASE_PATH=/
+WORKDIR /app
+
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm install
+
+COPY frontend/. ./
+ENV VITE_BASE_PATH=${BASE_PATH}
+RUN npm run build
+
+# ----- runtime -----
+
+FROM nginx:alpine
+ARG BASE_PATH=/
+COPY --from=build /app/dist /usr/share/nginx/html
+COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
+# Replace the literal ${BASE_PATH} placeholders in nginx.conf with the
+# build-arg value. Using sed keeps the runtime image free of envsubst
+# templating logic and means the config nginx actually parses is just
+# normal nginx syntax.
+RUN sed -i "s|\${BASE_PATH}|${BASE_PATH}|g" /etc/nginx/conf.d/default.conf
+
+EXPOSE 80
