@@ -58,10 +58,44 @@ auth"):
 
 No `gantry` app row exists in the portal `apps` table yet.
 
+## PORTAL PREREQUISITE (Drew-gated) -- federation is broken portal-wide
+
+Root cause confirmed 2026-06-26: the portal migration (PR #9) shipped
+**without a JWT key-encryption secret and without a bootstrap signing key**.
+
+- `PORTAL_JWT_KEY_ENCRYPTION_KEY` is NOT set in the running portal and NOT
+  in `docker-compose.portal.yml` (only a placeholder in `.env.example`).
+- `portal_signing_keys` is empty; `getActiveSigningKey()` throws when empty,
+  so `/api/portal/launch/[slug]` **500s for every `subdomain`-shape app**
+  (lumenanalytics, axlepoint, and Gantry) -- federation is non-functional
+  in production right now, not just for Gantry.
+
+A transient encryption key is NOT acceptable: it must persist in the deploy
+config, or the next portal restart orphans the encrypted private key
+permanently. One-time fix (Drew or the portal task, NOT done here):
+
+```powershell
+# 1. A candidate 32-byte secret is staged (gitignored, outside VCS):
+#    C:\dev\_secrets\portal_jwt_key_encryption_key.local.txt
+# 2. Add it persistently to docker-compose.portal.yml portal.environment:
+#      PORTAL_JWT_KEY_ENCRYPTION_KEY: ${PORTAL_JWT_KEY_ENCRYPTION_KEY:?set me}
+#    and export it (like AUTH_SECRET) for the deploy shell.
+# 3. Recreate + mint the bootstrap signing key:
+cd C:\dev\portal-shell
+$env:PORTAL_JWT_KEY_ENCRYPTION_KEY = (Get-Content C:\dev\_secrets\portal_jwt_key_encryption_key.local.txt -Raw).Trim()
+docker compose -f docker-compose.portal.yml up -d --force-recreate portal
+docker compose -f docker-compose.portal.yml exec portal npm run gate:rotate
+# verify: JWKS should now return a key, not {"keys":[]}
+curl.exe -s -H "Host: portal.paradigm.codes" http://localhost:8090/.well-known/jwks.json
+```
+
+This is a portal-deploy fix (secrets-sensitive, outward-facing) and is the
+gate for the Gantry cutover below. Surface to Drew first.
+
 ## What the next session should do first (cutover runbook)
 
-Run only **after** `local_9deae09c` finishes and the portal is
-federation-ready. Readiness check:
+Run only **after** the PORTAL PREREQUISITE above is satisfied and the portal
+is federation-ready. Readiness check:
 
 ```powershell
 # 1 = ready (>=1 active signing key), keys array non-empty, base url settled
