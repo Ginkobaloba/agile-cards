@@ -1,6 +1,21 @@
 # smoke.yml -- fast surface checks run on every PR
 #
-# deploy_url: Cloudflare Tunnel exposes the board at https://app.projectnexuscode.org
+# deploy_url: PLACEHOLDER until the Gantry cutover lands. The board is not
+# independently reachable from CI right now:
+#   - app.projectnexuscode.org no longer resolves in public DNS (it was the old
+#     Cloudflare Tunnel host and is what made this smoke fail from CI).
+#   - The board now only answers behind the portal auth wall: every
+#     https://portal.projectnexuscode.org/gantry/* and
+#     https://portal.paradigm.codes/gantry/* path returns 200 but redirects to
+#     portal.paradigm.codes/login, so none of the surfaces below (/, /healthz,
+#     /api/cards) can be asserted unauthenticated yet.
+# While deploy_url stays a placeholder, the verify workflow's detect job skips
+# quick-verify (neutral, not a green pass) instead of failing on DNS or faking a pass.
+# TODO (Gantry cutover): once the board is reachable, set deploy_url to the real
+# origin -- expected https://portal.projectnexuscode.org/gantry (or
+# https://portal.paradigm.codes/gantry after the paradigm.codes migration) -- and
+# prefix the surface URLs below with the /gantry base path.
+#
 # The backend API is proxied by nginx at /api/ on the same origin.
 # The board is token-gated, so the home surface returns 200 but renders the
 # TokenGate form rather than the authenticated dashboard.
@@ -14,7 +29,7 @@
 #   json_path_equals  -- checks that a JSONPath expression equals `expect`
 
 target: agile-cards-board
-deploy_url: https://app.projectnexuscode.org  # TODO: confirm live URL is reachable from CI
+deploy_url: placeholder-pending-gantry-cutover  # see header note; detect job skips quick-verify while placeholder
 
 surfaces:
   - name: home

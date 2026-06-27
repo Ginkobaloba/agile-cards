@@ -12,10 +12,15 @@ if ! command -v yq >/dev/null 2>&1; then echo "yq is required"; exit 1; fi
 
 deploy_url="$(yq -r '.deploy_url' "$SMOKE")"
 case "$deploy_url" in
-  *example*|*"<"*|""|null)
-    echo "deploy_url is a placeholder ($deploy_url) -- no public deploy configured."
-    echo "Skipping live smoke (neutral pass). Fill deploy_url in verify/smoke.yml to enable."
-    exit 0;;
+  *example*|*placeholder*|*pending*|*"<"*|""|null)
+    # deploy_url is a placeholder. This script must never report a green "pass"
+    # over a smoke run that tested nothing -- that hides an unverified PR behind a
+    # passing check. In CI the `detect` job gates this script off when deploy_url
+    # is a placeholder, so quick-verify shows as skipped (neutral). If this script
+    # is reached anyway (e.g. run directly), fail loudly instead of faking a pass.
+    echo "ERROR: deploy_url is a placeholder ($deploy_url) -- no reachable deploy configured."
+    echo "Set a real deploy_url in $SMOKE to run the live smoke."
+    exit 1;;
 esac
 deploy_url="${deploy_url%/}"
 

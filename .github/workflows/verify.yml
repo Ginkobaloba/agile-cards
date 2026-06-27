@@ -14,6 +14,14 @@
 # with Chrome and the computer-use MCP running. They cannot run in CI. CI covers
 # layers 1-4 and curated edge cases only. The human-gated local run covers layers 5-6.
 # Default to ubuntu-latest for network and headless layers.
+#
+# PLACEHOLDER / SKIP NOTE:
+# quick-verify only runs when verify/smoke.yml has a real, reachable deploy_url.
+# A `detect` job reads deploy_url first; if it is a placeholder (no host yet, or a
+# deploy that is not publicly reachable), quick-verify is SKIPPED, not reported as a
+# pass. A skipped check is honest -- it shows the PR was not smoke-verified instead of
+# painting a green "pass" over a smoke run that tested nothing. Set a real deploy_url
+# to light up the live smoke.
 
 name: Paradigm Verify
 
@@ -22,8 +30,39 @@ on:
     types: [opened, synchronize, reopened, labeled]
 
 jobs:
+  detect:
+    name: Detect deploy target
+    runs-on: ubuntu-latest
+    outputs:
+      live: ${{ steps.check.outputs.live }}
+      deploy_url: ${{ steps.check.outputs.deploy_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Read deploy_url from verify/smoke.yml
+        id: check
+        run: |
+          url="$(yq -r '.deploy_url' verify/smoke.yml)"
+          echo "deploy_url=$url" >> "$GITHUB_OUTPUT"
+          case "$url" in
+            ""|null|*example*|*placeholder*|*pending*|*"<"*)
+              echo "live=false" >> "$GITHUB_OUTPUT"
+              echo "::notice title=Live smoke skipped::deploy_url is a placeholder ($url). No reachable deploy is configured, so quick-verify is skipped (neutral, not a pass). Set a real deploy_url in verify/smoke.yml to enable the live smoke." ;;
+            *)
+              echo "live=true" >> "$GITHUB_OUTPUT" ;;
+          esac
+
   quick-verify:
     name: Quick Verify (all PRs)
+    needs: detect
+    if: needs.detect.outputs.live == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
