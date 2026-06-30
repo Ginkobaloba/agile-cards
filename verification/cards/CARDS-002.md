@@ -1,22 +1,25 @@
 ---
 AC: AC-CARDS-002
 Phase: v1
-Status: PENDING
+Status: PASS
 Verifier: Claude (K2)
-Verified at: 2026-06-29
+Verified at: 2026-06-30
 Evidence: >
-  Chunk: K2. AC text: "Repo structure includes backend/ (Python or C#),
-  frontend/ (Boards UI), tests/, docs/, and CI config. Verification: Audit -- ls check."
+  AC text: "Repo structure includes backend/ (Python or C#), frontend/
+  (Boards UI), tests/, docs/, and CI config. Verification: Audit -- ls check."
 
-  State at write time (branch chore/k2-paradigm-agilecards-structure):
-  - backend/  -> FastAPI scaffold (app.py, pyproject.toml, tests/, README.md). Python.
+  ls check (branch head, squash-merged verbatim to main via PR #44):
+  - backend/  -> FastAPI scaffold: app.py, pyproject.toml, README.md, tests/. Python.
   - frontend/ -> React/Vite Boards UI (moved from apps/board/frontend).
   - tests/    -> repo-level integration/e2e placeholder (README.md).
-  - docs/     -> repo docs (adr/, handoffs/, board/).
-  - CI config -> .github/workflows/ci.yml (4 jobs incl. backend fastapi scaffold).
+  - docs/     -> adr/, handoffs/, board/.
+  - .github/workflows/ci.yml -> CI config present (4 jobs).
 
-  PENDING -> PASS flips when the `ls` check passes on `main` (this PR merged).
-  Audit is performed on the branch head, which squash-merges verbatim.
+  Audit command output (all present):
+    OK backend  OK frontend  OK tests  OK docs  OK .github/workflows/ci.yml
+    OK backend/app.py  OK backend/pyproject.toml
+  CI run 28424040046: engine runner battery, board frontend battery, board
+  backend battery, backend (fastapi scaffold) -- all pass.
 ---
 
 # AC-CARDS-002 -- Repo structure: backend/ frontend/ tests/ docs/ + CI
@@ -33,4 +36,4 @@ Boards UI, `tests/` and `docs/` exist, and CI config is present.
 
 ## Result
 
-PENDING -- see frontmatter Evidence. Flips to PASS on merge to `main`.
+PASS -- all required structure present; backend is Python/FastAPI; CI green.
