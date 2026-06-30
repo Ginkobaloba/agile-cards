@@ -41,40 +41,37 @@ PR and every Renovate `@paradigm/*` bump.
 - **CARDS-014 live conformance is intentionally dormant** (`describe.skip`),
   wired by K11b when the Node BFF + `@paradigm/llm-client` dependency land.
 
-## !!! Out-of-band finding: an uncommitted K11 spike in the working tree
+## Out-of-band finding: K11 residue in this shared working tree (NOT at risk)
 
-During this session a **complete K11 spike was found uncommitted** in
-`C:\dev\paradigm-agilecards` -- on **no branch and no stash** (`git log --all`
-and `git stash list` both empty for it). It was being actively written between
-~11:18 and ~11:26 (file mtimes) by a concurrent process, in parallel with this
-K16 session:
+This K16 session ran concurrently with a K11 session in the **same checkout**
+(a known pattern -- see memory `parallel-chunks-share-checkout`). The K11 work
+left untracked/modified files in `C:\dev\paradigm-agilecards`:
 
-- `backend/cards_api/` -- `auth.py`, `config.py`, `deps.py`, `main.py`,
-  `store.py`, `__init__.py` (a full FastAPI Cards API + JWKS verifier)
-- modified (tracked) `backend/app.py`, `backend/pyproject.toml` (version bump to
-  1.0.0, `pyjwt[crypto]` runtime dep, `cards_api` packaging, `infisical` extra),
-  `.gitignore`
-- `backend/.env.example`, plus `backend/.venv/` and caches
-- test drafts: `backend/tests/{conftest.py, test_auth_verify.py,
-  test_config_secrets.py, test_endpoint_auth.py, test_org_isolation.py}`
-  (these import `cards_api.auth`; scoped to **AC-CARDS-003**, i.e. **K11**, not
-  K16). Their auth tests REJECT on unknown kid; they do not implement the
-  refresh-on-unknown-kid behavior CARDS-013 requires.
+- `backend/cards_api/` (auth/config/deps/main/store), modified `backend/app.py`,
+  `backend/pyproject.toml` (v1.0.0, `pyjwt[crypto]`, `cards_api` packaging,
+  `infisical` extra), `.gitignore`, `backend/.env.example`, `.venv/`, caches, and
+  test drafts `backend/tests/{conftest,test_auth_verify,test_config_secrets,
+  test_endpoint_auth,test_org_isolation}.py`.
 
-**This K16 work deliberately did not touch any of it.** K16 sidesteps the shared
-`backend/pyproject.toml` by housing its deps in `backend/contracts/requirements.txt`,
-and everything K16 committed was staged by explicit path. The K11 spike is still
-sitting dirty in the working tree and **will be lost** if someone runs `vend`,
-`git checkout`, or `git stash drop`. **Decide its home before doing any blanket
-git operation in this repo.**
+**Correction to an earlier read:** this is **NOT an at-risk sole copy.** It is
+**residue of the already-open PR #47** (`feat/cards-k11-jwt-auth`, K11, OPEN, not
+merged) -- verified: that remote branch contains the full `backend/cards_api/`.
+So the untracked residue is safe to discard; the committed K11 work lives in #47.
+
+**This K16 work deliberately did not touch any of it.** K16 avoids the shared
+`backend/pyproject.toml` by housing its deps in `backend/contracts/requirements.txt`;
+everything K16 committed was staged by explicit path. Still: do NOT run `vend`
+or `git add -A` on this shared checkout -- a blanket commit would sweep K11
+residue into the wrong PR.
 
 ## What the next session should do first
 
-1. **Resolve the K11 spike (above) before anything else.** Either commit it to a
-   `feat/k11-*` branch (it's substantial, looks mostly built) or discard it
-   deliberately. Do NOT run `vend`/`git add -A` until it's resolved -- a blanket
-   commit would entangle K11 into the wrong PR.
-2. **Merge PR #48** if approved (CI is green).
+1. **Use a git worktree for the next chunk** (per memory
+   `parallel-chunks-share-checkout`). The K11 residue in this checkout can be
+   discarded safely (`git checkout -- backend/app.py backend/pyproject.toml
+   .gitignore` and remove the untracked `cards_api/`/drafts) -- it is reproduced
+   in PR #47. Do NOT `vend`/`git add -A` here.
+2. **Merge PR #48** if approved (CI is green). Bottom-up if stacked behind #47.
 3. **K11 / K11b:** when the real verifier lands it must satisfy
    `backend/contracts/test_paradigm_auth_contract.py`. When the Node BFF +
    `@paradigm/llm-client` land, wire the CARDS-014 live block (flip
@@ -84,9 +81,12 @@ git operation in this repo.**
 
 ## Open questions for Drew
 
-- The K11 spike: commit to a branch, or discard? (It's uncommitted and at risk.)
-- Were K11 and K16 meant to run in the same working tree? If chunks run in
-  parallel, separate git worktrees would avoid this collision entirely.
+- Parallel chunks share one checkout (K11 + K16 here; documented in memory). The
+  dispatcher does not hand out worktrees. Worth wiring worktree isolation into
+  the chunk-dispatch flow so this stops recurring?
+- PR #47 (K11) and PR #48 (K16) are both open against `main`. Merge order /
+  whether #48 should rebase after #47 lands (both touch `backend/`, but disjoint
+  paths -- `cards_api/` vs `contracts/` -- so no conflict expected).
 
 ## Pointers
 
@@ -100,5 +100,6 @@ git operation in this repo.**
 
 Future sessions: read `C:\dev\SESSION_PROTOCOL.md`, then `CLAUDE.md` in this
 project (there is none at repo root yet -- consider adding one), then this file,
-then run `vstart`. First action: resolve the uncommitted K11 spike described
-above before any blanket git operation.
+then run `vstart`. First action: build the next chunk in a git worktree off
+`origin/main`; the K11 residue in this shared checkout is safe to discard (it is
+in PR #47). Do not run blanket git operations on this checkout.
