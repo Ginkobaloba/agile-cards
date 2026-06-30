@@ -101,8 +101,36 @@ are CI-gated; human review is for the platform monorepo's `packages/` and
 - Verification records: `verification/cards/CARDS-001.md`, `CARDS-002.md`
 - Prior handoff: `docs/handoffs/HANDOFF_2026-06-25_gantry-portal-embed.md`
 
+## Update 2026-06-30 (closeout) -- local clone resolved + two open cleanups
+
+The "move the local clone" step above is **done**: the canonical local clone now
+lives at `C:\dev\paradigm-agilecards` (fresh `git clone` of origin, on `main`,
+clean). It was cloned rather than moved because the old folder was the running
+session's locked CWD. Two cleanups remain so they do not fall through:
+
+1. **Delete the stale `C:\dev\agile-cards` duplicate.** It is the pre-rename
+   clone, fully merged (`ahead=0`, HEAD `5499db6` is in origin). Only the
+   untracked `.github/branch-protection.json` was unique; it is preserved at
+   `C:\dev\_agile-cards_branch-protection.json` (a K17 artifact: a "Deep Verify
+   (tier-3 PRs only)" required-check config). Delete the folder from a shell not
+   rooted inside it:
+   ```powershell
+   Remove-Item -Recurse -Force C:\dev\agile-cards
+   ```
+2. **Reconcile the K-DOC README seed.** When the destination folder was set up it
+   held a richer K-DOC "README seed" describing the *future* target (`app/main.py`
+   package layout + a Node BFF + `.npmrc` + contract tests) -- which diverges from
+   what K2 shipped (single-file `backend/app.py`, `legacy/`, `engine/`). That seed
+   is preserved at `C:\dev\_paradigm-agilecards-KDOC-README-seed.md`. K-DOC owns
+   the final README (DOC-001); K11/K11b build the package + BFF the seed describes.
+
+Also: the K2 verification records were mirrored into the platform monorepo
+(`paradigm-platform/verification/cards/CARDS-001.md`, `CARDS-002.md` = PASS) so the
+v1 AC matrix aggregates them; primary copies stay here in `verification/cards/`.
+
 ## Next Session Onboarding
 
 Future sessions: read `C:\dev\SESSION_PROTOCOL.md`, then `CLAUDE.md` in this
 project (there is none at repo root yet -- consider adding one), then this
-file, then run `vstart`. First action is the local-clone move above.
+file, then run `vstart`. The local clone is already in place at
+`C:\dev\paradigm-agilecards`; the two cleanups above are the only loose ends.
